@@ -1,0 +1,9 @@
+streamlit
+google-generativeai
+tavily-python
+beautifulsoup4
+requests
+gspread
+oauth2client
+PyPDF2
+pandas
