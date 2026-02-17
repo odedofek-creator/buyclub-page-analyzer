@@ -121,22 +121,98 @@ def get_rules(sheet_obj, category):
         return "", "", ""
 
 
-def perform_research(query):
-    """Uses Tavily to search for factual verification."""
+def perform_research(deal_name, category):
+    """
+    Context-Aware Research (Precision Mode):
+    1. Hotels -> Checks Booking.com + Google
+    2. Restaurants -> Checks SPECIFIC Swiss Michelin/GM URLs + Google
+    3. General -> Checks Google + Official Site
+    4. BANS -> Wanderlog, Sluurpy, RestaurantGuru, Top10
+    """
     try:
-        if "geneva" not in query.lower() and "lausanne" not in query.lower():
-            query += " Switzerland business reviews official site"
+        # --- 1. CONFIGURATION ---
+        banned_domains = [
+            "wanderlog.com", 
+            "restaurantguru.com", 
+            "sluurpy.com",
+            "top10.com",
+            "trip.com"
+        ]
+        
+        # --- 2. BUILD QUERIES BASED ON CATEGORY ---
+        # Base search (Universal)
+        queries = [f"{deal_name} {category} geneva google reviews official website"]
+        
+        # Category Specific Add-ons
+        if category and "Restaurant" in category:
+            # FORCE search inside the specific Swiss directories
+            queries.append(f"site:guide.michelin.com/en/ch {deal_name}")
+            queries.append(f"site:gaultmillau.ch {deal_name}")
+        
+        elif category and "Hotel" in category:
+            # FORCE search inside Booking.com
+            queries.append(f"site:booking.com {deal_name} geneva reviews")
 
-        response = tavily.search(query=query, search_depth="advanced", max_results=5)
-
+        # --- 3. EXECUTE SEARCHES ---
+        all_results = []
+        for q in queries:
+            # We use 'advanced' depth to get better snippets
+            try:
+                response = tavily.search(query=q, search_depth="advanced", max_results=5)
+                all_results.extend(response.get('results', []))
+            except:
+                continue # Skip if one query fails
+        
+        # --- 4. FILTER & FORMAT RESULTS ---
         context_data = []
-        for result in response.get('results', []):
-            context_data.append(f"Source: {result['url']}\nTitle: {result['title']}\nSnippet: {result['content']}\n")
+        seen_urls = set()
 
+        for result in all_results:
+            url = result['url']
+            title = result['title']
+            content = result['content']
+            
+            # Extract domain for checking
+            domain = url.split('/')[2] if '//' in url else url.split('/')[0]
+            
+            # A. DUPLICATE CHECK
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+            
+            # B. BLACKLIST CHECK
+            if any(bad in domain for bad in banned_domains):
+                continue
+            
+            # C. SOURCE LABELLING
+            source_label = "General Web"
+            
+            if "google" in domain:
+                source_label = "GOOGLE REVIEWS (High Trust)"
+            elif "booking.com" in domain:
+                source_label = "BOOKING.COM (High Trust)"
+            elif "michelin" in domain:
+                source_label = "MICHELIN GUIDE SWITZERLAND (Authoritative)"
+            elif "gaultmillau" in domain:
+                source_label = "GAULT MILLAU (Authoritative)"
+            elif "tripadvisor" in domain:
+                source_label = "TRIPADVISOR"
+            elif "facebook" in domain:
+                source_label = "FACEBOOK"
+
+            # D. DATA PACKAGING
+            context_data.append(f"""
+            SOURCE: {source_label}
+            URL: {url}
+            TITLE: {title}
+            SNIPPET: {content}
+            --------------------------------------------------
+            """)
+            
         return "\n".join(context_data)
+
     except Exception as e:
         return f"Search failed: {e}"
-
 
 def analyze_with_gemini(scraped_txt, prev_txt, contract_txt, search_data, gen_rules, cat_rules, feed_log, specific_instr):
 
