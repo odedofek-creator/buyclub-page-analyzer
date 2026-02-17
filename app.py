@@ -23,8 +23,11 @@ if not all(k in st.secrets for k in required_secrets):
     st.stop()
 
 # Initialize APIs
-genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-tavily = TavilyClient(api_key=st.secrets["TAVILY_API_KEY"])
+try:
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+    tavily = TavilyClient(api_key=st.secrets["TAVILY_API_KEY"])
+except Exception as e:
+    st.error(f"API Configuration Failed: {e}")
 
 # Google Sheets Connector
 @st.cache_resource
@@ -186,14 +189,29 @@ def analyze_with_gemini(scraped_txt, prev_txt, contract_txt, search_data, gen_ru
     [EXTERNAL SEARCH RESEARCH]: {search_data}
     """
 
-    # FIX APPLIED: Using system_instruction correctly as per Claude's advice
-    model = genai.GenerativeModel(
-        model_name='gemini-1.5-flash',
-        system_instruction=system_prompt
-    )
-    
-    response = model.generate_content(user_prompt)
-    return response.text
+    # --- CLAUDE'S DIAGNOSTIC CODE START ---
+    try:
+        # Debug: Check which key we are using (safe display)
+        key_preview = st.secrets["GOOGLE_API_KEY"][:10] + "..."
+        st.warning(f"🔎 DEBUG: Using API Key starting with: {key_preview}")
+        st.warning(f"🔎 DEBUG: Attempting to call model 'gemini-1.5-flash'")
+
+        model = genai.GenerativeModel(
+            model_name='gemini-1.5-flash',
+            system_instruction=system_prompt
+        )
+        
+        response = model.generate_content(user_prompt)
+        return response.text
+
+    except Exception as e:
+        # This forces the REAL error to show up in the app UI
+        st.error("❌ CRITICAL ERROR CAUGHT")
+        st.error(f"Error Type: {type(e).__name__}")
+        st.error(f"Error Message: {str(e)}")
+        # Return a fallback message so the app doesn't just crash blank
+        return f"FATAL ERROR: {str(e)}"
+    # --- CLAUDE'S DIAGNOSTIC CODE END ---
 
 def archive_report(sheet_obj, deal_name, category, report_text):
     """Parses score and saves full report to Archive tab."""
@@ -290,6 +308,8 @@ if analyze_btn:
             
             # 5. Gemini Analysis
             status.write("🤖 Generating Compliance Report (Gemini 1.5 Flash)...")
+            
+            # CALLING THE NEW DIAGNOSTIC FUNCTION
             report = analyze_with_gemini(
                 scraped_text, prev_text, contract_text, search_results, 
                 gen_rules, cat_rules, feed_log, specific_instructions
@@ -297,14 +317,17 @@ if analyze_btn:
             
             # 6. Archive
             status.write("💾 Archiving Results...")
-            if sh:
+            if sh and "FATAL ERROR" not in report:
                 archive_report(sh, deal_name, category, report)
             
             status.update(label="Analysis Complete", state="complete", expanded=False)
 
         # Output Display
         st.markdown("### 📋 Compliance Report")
-        st.markdown(report)
+        if "FATAL ERROR" in report:
+            st.error(report)
+        else:
+            st.markdown(report)
 
 # ==============================================================================
 # FEEDBACK LOOP
