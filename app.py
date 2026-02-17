@@ -186,8 +186,13 @@ def analyze_with_gemini(scraped_txt, prev_txt, contract_txt, search_data, gen_ru
     [EXTERNAL SEARCH RESEARCH]: {search_data}
     """
 
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    response = model.generate_content([system_prompt, user_prompt])
+    # FIX APPLIED: Using system_instruction correctly as per Claude's advice
+    model = genai.GenerativeModel(
+        model_name='gemini-1.5-flash',
+        system_instruction=system_prompt
+    )
+    
+    response = model.generate_content(user_prompt)
     return response.text
 
 def archive_report(sheet_obj, deal_name, category, report_text):
@@ -284,7 +289,7 @@ if analyze_btn:
             search_results = perform_research(search_query)
             
             # 5. Gemini Analysis
-            status.write("🤖 Generating Compliance Report (Gemini 1.5 Pro)...")
+            status.write("🤖 Generating Compliance Report (Gemini 1.5 Flash)...")
             report = analyze_with_gemini(
                 scraped_text, prev_text, contract_text, search_results, 
                 gen_rules, cat_rules, feed_log, specific_instructions
