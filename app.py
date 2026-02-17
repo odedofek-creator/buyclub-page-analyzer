@@ -186,7 +186,7 @@ def analyze_with_gemini(scraped_txt, prev_txt, contract_txt, search_data, gen_ru
     [EXTERNAL SEARCH RESEARCH]: {search_data}
     """
 
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-pro')
     response = model.generate_content([system_prompt, user_prompt])
     return response.text
 
