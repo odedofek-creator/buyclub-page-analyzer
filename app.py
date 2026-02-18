@@ -38,7 +38,6 @@ def init_google_sheets():
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
         client = gspread.authorize(creds)
-        # Attempt to open the brain sheet
         sheet = client.open("BuyClub_Page_Analyzer_Brain")
         return sheet
     except Exception as e:
@@ -48,20 +47,18 @@ def init_google_sheets():
 sh = init_google_sheets()
 
 # ==============================================================================
+# SESSION STATE INITIALIZATION
+# ==============================================================================
+if 'analysis_result' not in st.session_state:
+    st.session_state.analysis_result = None
+if 'current_archive_name' not in st.session_state:
+    st.session_state.current_archive_name = ""
+if 'current_category' not in st.session_state:
+    st.session_state.current_category = ""
+
+# ==============================================================================
 # HELPER FUNCTIONS
 # ==============================================================================
-
-def clean_search_term(deal_name):
-    """
-    Strips dates from the Deal Name so we search for the Business Name only.
-    Example: "Amore Amore Feb 2026" -> "Amore Amore"
-    """
-    # Regex to find a space followed by a month name (English/French abbreviations)
-    # Matches: space + (Jan|Feb...|Janv|Fev...) + anything after
-    pattern = r"(?i)\s+\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|janv|fév|mars|avr|mai|juin|juil|août|sept|oct|nov|déc).*"
-    
-    clean_name = re.sub(pattern, "", deal_name).strip()
-    return clean_name
 
 def scrape_url(url):
     """Basic text extraction from a URL."""
@@ -71,7 +68,6 @@ def scrape_url(url):
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Kill all script and style elements
         for script in soup(["script", "style", "nav", "footer"]):
             script.extract()
             
@@ -105,11 +101,9 @@ def get_rules(sheet_obj, category):
         return "", "", ""
     
     try:
-        # 1. General Rules
         ws_gen = sheet_obj.worksheet("General_Rules")
         gen_rules = "\n".join([r[0] for r in ws_gen.get_all_values() if r])
 
-        # 2. Category Rules
         ws_cat = sheet_obj.worksheet("Category_Rules")
         cat_data = ws_cat.get_all_values()
         headers = cat_data[0]
@@ -117,13 +111,11 @@ def get_rules(sheet_obj, category):
         cat_rules_text = ""
         if category in headers:
             col_index = headers.index(category)
-            # Get data from that specific column, skipping header
             rules = [row[col_index] for row in cat_data[1:] if len(row) > col_index and row[col_index].strip()]
             cat_rules_text = "\n".join(rules)
         else:
             cat_rules_text = "No specific rules found for this category."
 
-        # 3. Feedback Log
         ws_feed = sheet_obj.worksheet("Feedback_Log")
         feed_rules = "\n".join([r[0] for r in ws_feed.get_all_values() if r])
 
@@ -133,49 +125,57 @@ def get_rules(sheet_obj, category):
         st.error(f"Error fetching rules: {e}")
         return "", "", ""
 
-def perform_research(deal_name, category):
+def perform_research(merchant_name, category, treatment_terms=""):
     """
-    Context-Aware Research (Precision Mode):
-    1. Hotels -> Checks Booking.com + Google
-    2. Restaurants -> Checks SPECIFIC Swiss Michelin/GM URLs + Google
-    3. General -> Checks Google + Official Site
-    4. BANS -> Wanderlog, Sluurpy, RestaurantGuru, Top10
+    Context-Aware Research (Precision Mode).
+    Uses 'merchant_name' for searching, NOT the archive name.
     """
     try:
-        # --- 1. CONFIGURATION ---
-        banned_domains = [
-            "wanderlog.com", 
-            "restaurantguru.com", 
-            "sluurpy.com",
-            "top10.com",
-            "trip.com"
-        ]
+        banned_domains = ["wanderlog.com", "restaurantguru.com", "sluurpy.com", "top10.com", "trip.com"]
         
-        # --- 2. BUILD QUERIES BASED ON CATEGORY ---
-        # Base search (Universal)
-        queries = [f"{deal_name} {category} geneva google reviews official website"]
+        # 1. Base Search (Universal)
+        queries = [f"{merchant_name} {category} geneva google reviews official website"]
         
-        # Category Specific Add-ons
+        # 2. Category Specific Searches
         if category and "Restaurant" in category:
-            # FORCE search inside the specific Swiss directories
-            queries.append(f"site:guide.michelin.com/en/ch {deal_name}")
-            queries.append(f"site:gaultmillau.ch {deal_name}")
-        
+            # RESTAURANTS: 
+            # A. Check French-Swiss Michelin & Gault Millau (captures Reviews AND Mentions)
+            queries.append(f"site:guide.michelin.com/ch/fr {merchant_name}")
+            queries.append(f"site:gaultmillau.ch/fr {merchant_name}")
+            
+            # B. Trusted Swiss News (Excluding Blogs)
+            queries.append(f"site:lematin.ch OR site:20min.ch OR site:tdg.ch OR site:letemps.ch {merchant_name}")
+            
         elif category and "Hotel" in category:
-            # FORCE search inside Booking.com
-            queries.append(f"site:booking.com {deal_name} geneva reviews")
+            # HOTELS: Check Booking.com & TripAdvisor Awards
+            queries.append(f"site:booking.com {merchant_name} geneva reviews")
+            queries.append(f"site:tripadvisor.com {merchant_name} \"Certificate of Excellence\"")
 
-        # --- 3. EXECUTE SEARCHES ---
+        elif category and "Spa" in category:
+            # SPAS: Check Magazines for TREATMENT
+            # Format: site:elle.com (Microneedling OR Botox)
+            
+            search_scope = f"site:elle.com OR site:cosmopolitan.com OR site:vogue.com OR site:marieclaire.com"
+            
+            if treatment_terms:
+                # If user entered "Microneedling, Botox" -> construct ("Microneedling" OR "Botox")
+                terms = [t.strip() for t in treatment_terms.split(',')]
+                joined_terms = " OR ".join(f'"{t}"' for t in terms)
+                queries.append(f"{search_scope} ({joined_terms})")
+            else:
+                # Fallback: Just search for the merchant name in these magazines
+                queries.append(f"{search_scope} {merchant_name}")
+
+        # 3. Execute Searches
         all_results = []
         for q in queries:
-            # We use 'advanced' depth to get better snippets
             try:
                 response = tavily.search(query=q, search_depth="advanced", max_results=5)
                 all_results.extend(response.get('results', []))
             except:
-                continue # Skip if one query fails
+                continue
         
-        # --- 4. FILTER & FORMAT RESULTS ---
+        # 4. Filter & Format
         context_data = []
         seen_urls = set()
 
@@ -184,45 +184,25 @@ def perform_research(deal_name, category):
             title = result['title']
             content = result['content']
             
-            # Extract domain for checking
             domain = url.split('/')[2] if '//' in url else url.split('/')[0]
             
-            # A. DUPLICATE CHECK
-            if url in seen_urls:
-                continue
+            if url in seen_urls: continue
             seen_urls.add(url)
             
-            # B. BLACKLIST CHECK
-            if any(bad in domain for bad in banned_domains):
-                continue
+            if any(bad in domain for bad in banned_domains): continue
             
-            # C. SOURCE LABELLING
             source_label = "General Web"
-            
-            if "google" in domain:
-                source_label = "GOOGLE REVIEWS (High Trust)"
-            elif "booking.com" in domain:
-                source_label = "BOOKING.COM (High Trust)"
-            elif "michelin" in domain:
-                source_label = "MICHELIN GUIDE SWITZERLAND (Authoritative)"
-            elif "gaultmillau" in domain:
-                source_label = "GAULT MILLAU (Authoritative)"
-            elif "tripadvisor" in domain:
-                source_label = "TRIPADVISOR"
-            elif "facebook" in domain:
-                source_label = "FACEBOOK"
+            if "google" in domain: source_label = "GOOGLE REVIEWS"
+            elif "booking.com" in domain: source_label = "BOOKING.COM"
+            elif "michelin" in domain: source_label = "MICHELIN GUIDE (Swiss/FR)"
+            elif "gaultmillau" in domain: source_label = "GAULT MILLAU (Swiss/FR)"
+            elif "tripadvisor" in domain: source_label = "TRIPADVISOR"
+            elif "lematin" in domain or "20min" in domain or "tdg.ch" in domain: source_label = "SWISS PRESS"
+            elif "elle" in domain or "vogue" in domain or "cosmo" in domain: source_label = "FASHION MAGAZINE"
 
-            # D. DATA PACKAGING
-            context_data.append(f"""
-            SOURCE: {source_label}
-            URL: {url}
-            TITLE: {title}
-            SNIPPET: {content}
-            --------------------------------------------------
-            """)
+            context_data.append(f"SOURCE: {source_label}\nURL: {url}\nTITLE: {title}\nSNIPPET: {content}\n-------------------")
             
         return "\n".join(context_data)
-
     except Exception as e:
         return f"Search failed: {e}"
 
@@ -239,51 +219,33 @@ def analyze_with_gemini(scraped_txt, prev_txt, contract_txt, search_data, gen_ru
     
     TONE:
     - Clinical, concise, factual. 
-    - No pleasantries (e.g., "Here is the report"). Start immediately with the data.
-    - Zero Hallucinations: If a marketing claim is made based on external data, you MUST provide the URL using format `[Source](url)`.
+    - No pleasantries. Start immediately with the data.
+    - Zero Hallucinations.
     
     ANALYSIS STRUCTURE:
-    
-    1. 📊 Executive Summary
-       - Score (0-100) based on severity of errors.
-       - One-Line Verdict.
-       
-    2. 🚨 Section 1: Critical Issues
-       - Contract Mismatches: Compare Contract Text vs Page Text (Price, Dates, Conditions).
-       - Regression: Compare Previous Deal vs Current Page (Did we lose a key selling point? Is the discount lower?).
-       - Factual Errors: Compare Page Text vs Search Data.
-       
-    3. ⚠️ Section 2: Compliance & Quality
-       - Rules Broken: Check against General Rules, Category Rules, and Feedback Log.
-       - Spelling/Grammar issues.
-       
-    4. 💡 Section 3: Marketing Opportunities
-       - Awards/Reviews found in Search Data that are missing from the page. (MUST include Source Link).
-       - Copy improvements for clarity or sales impact.
+    1. 📊 Executive Summary (Score 0-100 & Verdict)
+    2. 🚨 Section 1: Critical Issues (Contract Mismatches, Regression, Factual Errors)
+    3. ⚠️ Section 2: Compliance & Quality (Rules Broken, Spelling)
+    4. 💡 Section 3: Marketing Opportunities (Awards Missing, Copy Improvements)
+       - If you see a 'Certificate of Excellence' from TripAdvisor, flag it.
+       - If you see a mention in Swiss Press (Le Matin, 20min), quote it.
+       - If you see a mention in Elle, Cosmo, or Vogue, quote it.
     """
 
     user_prompt = f"""
     **DATA FOR ANALYSIS**
-    
     [CATEGORY RULES]: {cat_rules}
     [GENERAL RULES]: {gen_rules}
     [FEEDBACK LOG]: {feed_log}
     [SPECIFIC INSTRUCTIONS]: {specific_instr}
-    
     [CONTRACT TEXT]: {contract_txt}
-    
     [PREVIOUS DEAL TEXT]: {prev_txt}
-    
     [CURRENT PAGE TEXT (TARGET)]: {scraped_txt}
-    
     [EXTERNAL SEARCH RESEARCH]: {search_data}
     """
 
     try:
-        model = genai.GenerativeModel(
-            model_name='gemini-2.5-flash',
-            system_instruction=system_prompt
-        )
+        model = genai.GenerativeModel(model_name='gemini-2.5-flash', system_instruction=system_prompt)
         response = model.generate_content(user_prompt)
         return response.text
     except Exception as e:
@@ -293,8 +255,7 @@ def archive_report(sheet_obj, deal_name, category, report_text):
     """Parses score and saves full report to Archive tab."""
     try:
         ws = sheet_obj.worksheet("Analysis_Archive")
-        
-        # Extract score roughly (looking for "Score: XX" or similar)
+        import re
         score_match = re.search(r"Score.*?(\d{1,3})", report_text)
         score = score_match.group(1) if score_match else "N/A"
         
@@ -305,6 +266,7 @@ def archive_report(sheet_obj, deal_name, category, report_text):
             score,
             report_text
         ])
+        st.toast("✅ Report archived successfully!", icon="💾")
     except Exception as e:
         st.error(f"Archiving failed: {e}")
 
@@ -320,32 +282,14 @@ def save_feedback_rule(sheet_obj, rule_text):
 # UI LAYOUT
 # ==============================================================================
 
-# --- Sidebar ---
-st.sidebar.title("⚙️ Configuration")
-st.sidebar.success("System Connected")
-
-# Load Categories dynamically
-category_options = ["General"]
-if sh:
-    try:
-        ws_cat = sh.worksheet("Category_Rules")
-        headers = ws_cat.row_values(1)
-        if headers:
-            category_options = headers
-    except:
-        st.sidebar.warning("Could not load categories from 'Category_Rules' tab.")
-
-# --- Main Area ---
-st.title("🛡️ BuyClub Page Analyzer")
-st.markdown("---")
-
-# NEW UI LAYOUT
-# Row 1: The Basics
-col_a1, col_a2 = st.columns([2, 1])
+# Row 1: The Basics (Now Split)
+col_a1, col_a2, col_a3 = st.columns([1.5, 1.5, 1])
 with col_a1:
-    deal_name = st.text_input("Deal Name (e.g. 'Amore Amore Feb 2026')", placeholder="Business Name + Date")
+    archive_name = st.text_input("Deal Name (For Archive)", placeholder="e.g. Amore Amore Feb 2026")
 with col_a2:
-    category = st.selectbox("Category", category_options)
+    merchant_name = st.text_input("Merchant / Venue Name (For Search)", placeholder="e.g. Amore Amore")
+with col_a3:
+    category = st.selectbox("Category", ["General"] + (sh.worksheet("Category_Rules").row_values(1) if sh else []))
 
 # Row 2: The Links
 col_b1, col_b2 = st.columns(2)
@@ -359,71 +303,34 @@ col_c1, col_c2 = st.columns(2)
 with col_c1:
     contract_file = st.file_uploader("Contract / Sale Conditions", type=['pdf', 'txt'])
 with col_c2:
-    specific_instructions = st.text_area("Specific Instructions", height=100, placeholder="e.g., Check expiration date carefully.")
+    treatment_term = st.text_input("Treatment(s) (For Spas - Optional)", placeholder="e.g. Microneedling, Botox")
+    specific_instructions = st.text_area("Specific Instructions (Logic)", height=70)
 
 analyze_btn = st.button("Analyze Page", type="primary", use_container_width=True)
 
 # ==============================================================================
-# MAIN LOGIC
+# MAIN LOGIC (WITH SESSION STATE)
 # ==============================================================================
 
 if analyze_btn:
-    if not deal_name or not page_url:
-        st.error("Deal Name and Page URL are mandatory.")
+    if not archive_name or not merchant_name or not page_url:
+        st.error("Archive Name, Merchant Name, and Page URL are mandatory.")
     else:
         with st.status("Running Compliance Analysis...", expanded=True) as status:
-            
-            # 1. Fetch Rules
-            status.write("🧠 Accessing Hive Mind (Google Sheets)...")
+            status.write("🧠 Accessing Hive Mind...")
             gen_rules, cat_rules, feed_log = get_rules(sh, category)
             
-            # 2. Scrape Content
-            status.write("🕷️ Scraping Web Content...")
+            status.write("🕷️ Scraping Content...")
             scraped_text = scrape_url(page_url)
             prev_text = scrape_url(prev_url) if prev_url else "N/A"
-            
-            # 3. Process Contract
-            status.write("📄 Processing Contract...")
             contract_text = extract_text_from_file(contract_file)
             
-            # 4. External Research (WITH SMART CLEANER)
-            # A. Clean the name
-            search_name = clean_search_term(deal_name)
-            status.write(f"🕵️‍♂️ Conducting Deep Research for '{search_name}'...")
+            # Use the explicit Merchant Name for search
+            status.write(f"🕵️‍♂️ Researching '{merchant_name}'...")
+            search_results = perform_research(merchant_name, category, treatment_term)
             
-            # B. Run Research
-            search_results = perform_research(search_name, category)
-            
-            # 5. Gemini Analysis
-            status.write("🤖 Generating Compliance Report (Gemini 2.5 Flash)...")
+            status.write("🤖 Analyzing...")
             report = analyze_with_gemini(
                 scraped_text, prev_text, contract_text, search_results, 
                 gen_rules, cat_rules, feed_log, specific_instructions
             )
-            
-            # 6. Archive
-            status.write("💾 Archiving Results...")
-            if sh and report and "FATAL ERROR" not in report:
-                archive_report(sh, deal_name, category, report)
-            
-            status.update(label="Analysis Complete", state="complete", expanded=False)
-
-        # Output Display
-        st.markdown("### 📋 Compliance Report")
-        if report and "FATAL ERROR" in report:
-            st.error(report)
-        else:
-            st.markdown(report)
-
-# ==============================================================================
-# FEEDBACK LOOP
-# ==============================================================================
-
-st.markdown("---")
-with st.expander("🧠 Teach the App (Add to Feedback Log)"):
-    new_rule = st.text_input("Describe the error the AI missed or a new rule:")
-    if st.button("Save Rule"):
-        if new_rule and sh:
-            save_feedback_rule(sh, new_rule)
-        elif not sh:
-            st.error("Database not connected.")
