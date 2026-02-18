@@ -10,6 +10,7 @@ import pandas as pd
 from datetime import datetime
 import io
 import re
+import time
 
 # ==============================================================================
 # CONFIGURATION & SETUP
@@ -17,14 +18,47 @@ import re
 
 st.set_page_config(page_title="BuyClub Page Analyzer", layout="wide", page_icon="🛡️")
 
+# --- PASSWORD PROTECTION START ---
+def check_password():
+    """Returns `True` if the user had the correct password."""
+
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if st.session_state["password"] == st.secrets["APP_PASSWORD"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Don't store the password
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        st.session_state["password_correct"] = False
+
+    if st.session_state["password_correct"]:
+        return True
+
+    st.text_input(
+        "Enter Password", type="password", on_change=password_entered, key="password"
+    )
+    
+    if "password_correct" in st.session_state and st.session_state["password_correct"] is False:
+        st.error("😕 Password incorrect")
+        time.sleep(1)
+
+    return False
+
+if not check_password():
+    st.stop()
+# --- PASSWORD PROTECTION END ---
+
 # Verify Secrets
-required_secrets = ["GOOGLE_API_KEY", "TAVILY_API_KEY", "gcp_service_account"]
+required_secrets = ["GOOGLE_API_KEY", "TAVILY_API_KEY", "gcp_service_account", "APP_PASSWORD"]
 if not all(k in st.secrets for k in required_secrets):
     st.error("🚨 Missing API Keys in .streamlit/secrets.toml")
     st.stop()
 
 # Initialize APIs
 try:
+    # Uses Gemini 2.5 Flash as requested
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     tavily = TavilyClient(api_key=st.secrets["TAVILY_API_KEY"])
 except Exception as e:
@@ -125,21 +159,20 @@ def get_rules(sheet_obj, category):
         st.error(f"Error fetching rules: {e}")
         return "", "", ""
 
-def perform_research(merchant_name, category, treatment_terms=""):
+def perform_research(merchant_name, category, location="Geneva", treatment_terms=""):
     """
-    Context-Aware Research (Precision Mode).
-    Uses 'merchant_name' for searching, NOT the archive name.
+    Context-Aware Research.
+    Uses 'merchant_name' + 'location' for searching.
     """
     try:
         banned_domains = ["wanderlog.com", "restaurantguru.com", "sluurpy.com", "top10.com", "trip.com"]
         
-        # 1. Base Search (Universal)
-        queries = [f"{merchant_name} {category} geneva google reviews official website"]
+        # 1. Base Search (Universal) - Uses dynamic location
+        queries = [f"{merchant_name} {location} google reviews official website"]
         
         # 2. Category Specific Searches
         if category and "Restaurant" in category:
-            # RESTAURANTS: 
-            # A. Check French-Swiss Michelin & Gault Millau (captures Reviews AND Mentions)
+            # A. Check French-Swiss Michelin & Gault Millau
             queries.append(f"site:guide.michelin.com/ch/fr {merchant_name}")
             queries.append(f"site:gaultmillau.ch/fr {merchant_name}")
             
@@ -147,14 +180,12 @@ def perform_research(merchant_name, category, treatment_terms=""):
             queries.append(f"site:lematin.ch OR site:20min.ch OR site:tdg.ch OR site:letemps.ch {merchant_name}")
             
         elif category and "Hotel" in category:
-            # HOTELS: Check Booking.com & TripAdvisor Awards
-            queries.append(f"site:booking.com {merchant_name} geneva reviews")
+            # HOTELS
+            queries.append(f"site:booking.com {merchant_name} {location} reviews")
             queries.append(f"site:tripadvisor.com {merchant_name} \"Certificate of Excellence\"")
 
         elif category and "Spa" in category:
             # SPAS: Check Magazines for TREATMENT
-            # Format: site:elle.com (Microneedling OR Botox)
-            
             search_scope = f"site:elle.com OR site:cosmopolitan.com OR site:vogue.com OR site:marieclaire.com"
             
             if treatment_terms:
@@ -163,7 +194,7 @@ def perform_research(merchant_name, category, treatment_terms=""):
                 joined_terms = " OR ".join(f'"{t}"' for t in terms)
                 queries.append(f"{search_scope} ({joined_terms})")
             else:
-                # Fallback: Just search for the merchant name in these magazines
+                # Fallback
                 queries.append(f"{search_scope} {merchant_name}")
 
         # 3. Execute Searches
@@ -225,6 +256,7 @@ def analyze_with_gemini(scraped_txt, prev_txt, contract_txt, search_data, gen_ru
     ANALYSIS STRUCTURE:
     1. 📊 Executive Summary (Score 0-100 & Verdict)
     2. 🚨 Section 1: Critical Issues (Contract Mismatches, Regression, Factual Errors)
+       - If no Contract is provided: Note it as a Warning (not a failure).
     3. ⚠️ Section 2: Compliance & Quality (Rules Broken, Spelling)
     4. 💡 Section 3: Marketing Opportunities (Awards Missing, Copy Improvements)
        - If you see a 'Certificate of Excellence' from TripAdvisor, flag it.
@@ -282,25 +314,35 @@ def save_feedback_rule(sheet_obj, rule_text):
 # UI LAYOUT
 # ==============================================================================
 
-# Row 1: The Basics (Now Split)
+# Row 1: The Basics
 col_a1, col_a2, col_a3 = st.columns([1.5, 1.5, 1])
 with col_a1:
     archive_name = st.text_input("Deal Name (For Archive)", placeholder="e.g. Amore Amore Feb 2026")
 with col_a2:
     merchant_name = st.text_input("Merchant / Venue Name (For Search)", placeholder="e.g. Amore Amore")
 with col_a3:
-    category = st.selectbox("Category", ["General"] + (sh.worksheet("Category_Rules").row_values(1) if sh else []))
+    # SAFE CATEGORY LOADING (Claude Fix #2)
+    category_options = ["General"]
+    if sh:
+        try:
+            cat_headers = sh.worksheet("Category_Rules").row_values(1)
+            if cat_headers:
+                category_options = cat_headers
+        except:
+            pass
+    category = st.selectbox("Category", category_options)
 
-# Row 2: The Links
-col_b1, col_b2 = st.columns(2)
+# Row 2: Location & URL
+col_b1, col_b2 = st.columns([1, 2])
 with col_b1:
-    page_url = st.text_input("Current Page URL (Required)", placeholder="https://buyclub.ch/...")
+    location = st.text_input("City / Location", value="Geneva")
 with col_b2:
-    prev_url = st.text_input("Previous Deal URL (Optional)", placeholder="https://buyclub.ch/...")
+    page_url = st.text_input("Current Page URL (Required)", placeholder="https://buyclub.ch/...")
 
-# Row 3: Documents & Context
+# Row 3: Previous Deal & Documents
 col_c1, col_c2 = st.columns(2)
 with col_c1:
+    prev_url = st.text_input("Previous Deal URL (Optional)", placeholder="https://buyclub.ch/...")
     contract_file = st.file_uploader("Contract / Sale Conditions", type=['pdf', 'txt'])
 with col_c2:
     treatment_term = st.text_input("Treatment(s) (For Spas - Optional)", placeholder="e.g. Microneedling, Botox")
@@ -309,28 +351,92 @@ with col_c2:
 analyze_btn = st.button("Analyze Page", type="primary", use_container_width=True)
 
 # ==============================================================================
-# MAIN LOGIC (WITH SESSION STATE)
+# MAIN LOGIC
 # ==============================================================================
 
 if analyze_btn:
     if not archive_name or not merchant_name or not page_url:
         st.error("Archive Name, Merchant Name, and Page URL are mandatory.")
     else:
+        # CLEAR OLD RESULTS (Claude Fix #3)
+        st.session_state.analysis_result = None
+        st.session_state.current_archive_name = ""
+        st.session_state.current_category = ""
+        
         with st.status("Running Compliance Analysis...", expanded=True) as status:
             status.write("🧠 Accessing Hive Mind...")
             gen_rules, cat_rules, feed_log = get_rules(sh, category)
             
             status.write("🕷️ Scraping Content...")
             scraped_text = scrape_url(page_url)
+            
+            # CATCH SCRAPING ERRORS (Claude Improvement #6)
+            if scraped_text.startswith("Error scraping"):
+                st.error(f"Failed to scrape page: {scraped_text}")
+                status.update(label="❌ Scraping Failed", state="error", expanded=False)
+                st.stop()
+            
             prev_text = scrape_url(prev_url) if prev_url else "N/A"
             contract_text = extract_text_from_file(contract_file)
             
-            # Use the explicit Merchant Name for search
-            status.write(f"🕵️‍♂️ Researching '{merchant_name}'...")
-            search_results = perform_research(merchant_name, category, treatment_term)
+            # Use explicit Merchant Name + Location for search
+            status.write(f"🕵️‍♂️ Researching '{merchant_name}' in {location}...")
+            search_results = perform_research(merchant_name, category, location, treatment_term)
             
             status.write("🤖 Analyzing...")
-            report = analyze_with_gemini(
-                scraped_text, prev_text, contract_text, search_results, 
-                gen_rules, cat_rules, feed_log, specific_instructions
-            )
+            # LOADING INDICATOR (Claude Improvement #5)
+            with st.spinner("Waiting for Gemini response..."):
+                report = analyze_with_gemini(
+                    scraped_text, prev_text, contract_text, search_results, 
+                    gen_rules, cat_rules, feed_log, specific_instructions
+                )
+            
+            # SAVE TO MEMORY
+            st.session_state.analysis_result = report
+            st.session_state.current_archive_name = archive_name
+            st.session_state.current_category = category
+            
+            status.update(label="✅ Analysis Complete", state="complete", expanded=False)
+
+# ==============================================================================
+# DISPLAY REPORT & ACTIONS
+# ==============================================================================
+
+if st.session_state.analysis_result:
+    
+    # --- ACTION BUTTONS (ON TOP) ---
+    col_act1, col_act2 = st.columns(2)
+    
+    with col_act1:
+        if st.button("💾 Save to Archive", use_container_width=True):
+            if sh:
+                archive_report(sh, st.session_state.current_archive_name, st.session_state.current_category, st.session_state.analysis_result)
+    
+    with col_act2:
+        # REMOVED st.rerun() (Claude Fix #4)
+        if st.button("🗑️ Trash / Clear", use_container_width=True):
+            st.session_state.analysis_result = None
+            st.session_state.current_archive_name = ""
+            st.session_state.current_category = ""
+
+    st.markdown("---")
+    
+    st.markdown("### 📋 Compliance Report")
+    
+    if "FATAL ERROR" in st.session_state.analysis_result:
+        st.error(st.session_state.analysis_result)
+    else:
+        st.markdown(st.session_state.analysis_result)
+
+# ==============================================================================
+# FEEDBACK LOOP
+# ==============================================================================
+
+st.markdown("---")
+with st.expander("🧠 Teach the App (Add to Feedback Log)"):
+    new_rule = st.text_input("Describe the error the AI missed or a new rule:")
+    if st.button("Save Rule"):
+        if new_rule and sh:
+            save_feedback_rule(sh, new_rule)
+        elif not sh:
+            st.error("Database not connected.")
