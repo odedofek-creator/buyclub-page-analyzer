@@ -321,7 +321,7 @@ with col_a1:
 with col_a2:
     merchant_name = st.text_input("Merchant / Venue Name (For Search)", placeholder="e.g. Amore Amore")
 with col_a3:
-    # SAFE CATEGORY LOADING (Claude Fix #2)
+    # SAFE CATEGORY LOADING
     category_options = ["General"]
     if sh:
         try:
@@ -358,7 +358,7 @@ if analyze_btn:
     if not archive_name or not merchant_name or not page_url:
         st.error("Archive Name, Merchant Name, and Page URL are mandatory.")
     else:
-        # CLEAR OLD RESULTS (Claude Fix #3)
+        # CLEAR OLD RESULTS
         st.session_state.analysis_result = None
         st.session_state.current_archive_name = ""
         st.session_state.current_category = ""
@@ -370,7 +370,7 @@ if analyze_btn:
             status.write("🕷️ Scraping Content...")
             scraped_text = scrape_url(page_url)
             
-            # CATCH SCRAPING ERRORS (Claude Improvement #6)
+            # CATCH SCRAPING ERRORS
             if scraped_text.startswith("Error scraping"):
                 st.error(f"Failed to scrape page: {scraped_text}")
                 status.update(label="❌ Scraping Failed", state="error", expanded=False)
@@ -384,7 +384,7 @@ if analyze_btn:
             search_results = perform_research(merchant_name, category, location, treatment_term)
             
             status.write("🤖 Analyzing...")
-            # LOADING INDICATOR (Claude Improvement #5)
+            # LOADING INDICATOR
             with st.spinner("Waiting for Gemini response..."):
                 report = analyze_with_gemini(
                     scraped_text, prev_text, contract_text, search_results, 
@@ -413,20 +413,21 @@ if st.session_state.analysis_result:
                 archive_report(sh, st.session_state.current_archive_name, st.session_state.current_category, st.session_state.analysis_result)
     
     with col_act2:
-        # REMOVED st.rerun() (Claude Fix #4)
         if st.button("🗑️ Trash / Clear", use_container_width=True):
             st.session_state.analysis_result = None
             st.session_state.current_archive_name = ""
             st.session_state.current_category = ""
 
-    st.markdown("---")
-    
-    st.markdown("### 📋 Compliance Report")
-    
-    if "FATAL ERROR" in st.session_state.analysis_result:
-        st.error(st.session_state.analysis_result)
-    else:
-        st.markdown(st.session_state.analysis_result)
+    # CHECK FOR NONE BEFORE DISPLAYING (CRASH FIX)
+    if st.session_state.analysis_result:
+        st.markdown("---")
+        
+        st.markdown("### 📋 Compliance Report")
+        
+        if "FATAL ERROR" in st.session_state.analysis_result:
+            st.error(st.session_state.analysis_result)
+        else:
+            st.markdown(st.session_state.analysis_result)
 
 # ==============================================================================
 # FEEDBACK LOOP
