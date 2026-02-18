@@ -18,32 +18,37 @@ import time
 
 st.set_page_config(page_title="BuyClub Page Analyzer", layout="wide", page_icon="🛡️")
 
+# Debug mode (set DEBUG_MODE=true in secrets to enable)
+DEBUG_MODE = st.secrets.get("DEBUG_MODE", "false").lower() == "true"
+
 # --- PASSWORD PROTECTION START ---
 def check_password():
     """Returns `True` if the user had the correct password."""
 
-    def password_entered():
-        """Checks whether a password entered by the user is correct."""
-        if st.session_state["password"] == st.secrets["APP_PASSWORD"]:
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]  # Don't store the password
-        else:
-            st.session_state["password_correct"] = False
-
+    # 1. Initialize State
     if "password_correct" not in st.session_state:
-        st.session_state["password_correct"] = False
+        st.session_state.password_correct = False
 
-    if st.session_state["password_correct"]:
+    # 2. If already logged in, return True immediately
+    if st.session_state.password_correct:
         return True
 
-    st.text_input(
-        "Enter Password", type="password", on_change=password_entered, key="password"
-    )
-    
-    if "password_correct" in st.session_state and st.session_state["password_correct"] is False:
-        st.error("😕 Password incorrect")
-        time.sleep(1)
+    # 3. Show the Login Form
+    with st.form("login_form"):
+        st.header("🔒 Login Required")
+        password_input = st.text_input("Enter Password", type="password")
+        submit_button = st.form_submit_button("Login", type="primary")
 
+    # 4. Check Password ONLY when button is clicked
+    if submit_button:
+        if password_input == st.secrets["APP_PASSWORD"]:
+            st.session_state.password_correct = True
+            st.rerun()  # Force reload to show app
+        else:
+            st.error("😕 Password incorrect")
+            time.sleep(1)  # Security delay
+
+    # 5. If we reach here, user is not logged in yet
     return False
 
 if not check_password():
@@ -56,13 +61,14 @@ if not all(k in st.secrets for k in required_secrets):
     st.error("🚨 Missing API Keys in .streamlit/secrets.toml")
     st.stop()
 
-# Initialize APIs
+# Initialize APIs (IMPROVEMENT #1: Better error handling - no key leakage)
 try:
-    # Uses Gemini 2.5 Flash as requested
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     tavily = TavilyClient(api_key=st.secrets["TAVILY_API_KEY"])
 except Exception as e:
-    st.error(f"API Configuration Failed: {e}")
+    st.error("🚨 API Configuration Failed. Please check your secrets configuration.")
+    if DEBUG_MODE:
+        st.exception(e)
     st.stop()
 
 # Google Sheets Connector
@@ -75,7 +81,9 @@ def init_google_sheets():
         sheet = client.open("BuyClub_Page_Analyzer_Brain")
         return sheet
     except Exception as e:
-        st.error(f"Failed to connect to Google Sheets: {e}")
+        st.error("Failed to connect to Google Sheets. Please verify your service account credentials.")
+        if DEBUG_MODE:
+            st.exception(e)
         return None
 
 sh = init_google_sheets()
@@ -89,6 +97,9 @@ if 'current_archive_name' not in st.session_state:
     st.session_state.current_archive_name = ""
 if 'current_category' not in st.session_state:
     st.session_state.current_category = ""
+# IMPROVEMENT #5: Rate limiting
+if 'last_analysis_time' not in st.session_state:
+    st.session_state.last_analysis_time = 0
 
 # ==============================================================================
 # HELPER FUNCTIONS
@@ -96,9 +107,14 @@ if 'current_category' not in st.session_state:
 
 def scrape_url(url):
     """Basic text extraction from a URL."""
+    # IMPROVEMENT #3: URL validation
+    if not url or not url.startswith(('http://', 'https://')):
+        return "Error scraping URL: Invalid URL format (must start with http:// or https://)"
+    
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        response = requests.get(url, headers=headers, timeout=10)
+        # IMPROVEMENT #7: Longer timeout for slow pages
+        response = requests.get(url, headers=headers, timeout=20)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
         
@@ -106,9 +122,14 @@ def scrape_url(url):
             script.extract()
             
         text = soup.get_text(separator="\n")
-        return "\n".join([line.strip() for line in text.splitlines() if line.strip()])
+        cleaned_text = "\n".join([line.strip() for line in text.splitlines() if line.strip()])
+        
+        if DEBUG_MODE:
+            st.info(f"✅ Scraped {len(cleaned_text)} characters from {url}")
+        
+        return cleaned_text
     except Exception as e:
-        return f"Error scraping URL: {e}"
+        return f"Error scraping URL: {str(e)}"
 
 def extract_text_from_file(uploaded_file):
     """Extracts text from PDF or TXT."""
@@ -125,13 +146,25 @@ def extract_text_from_file(uploaded_file):
             text = uploaded_file.read().decode("utf-8")
         else:
             text = "[Image/Unsupported File Uploaded - Content not readable by this script version]"
+        
+        if DEBUG_MODE and text:
+            st.info(f"✅ Extracted {len(text)} characters from uploaded file")
+            
     except Exception as e:
         text = f"Error reading file: {e}"
     return text
 
-def get_rules(sheet_obj, category):
+# IMPROVEMENT #2: Cache rules for 5 minutes
+@st.cache_data(ttl=300)
+def get_rules(sheet_name, category):
     """Fetches General Rules, Specific Category Rules, and Feedback."""
-    if not sheet_obj:
+    # Re-initialize sheet connection inside cached function
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
+        client = gspread.authorize(creds)
+        sheet_obj = client.open(sheet_name)
+    except:
         return "", "", ""
     
     try:
@@ -152,6 +185,9 @@ def get_rules(sheet_obj, category):
 
         ws_feed = sheet_obj.worksheet("Feedback_Log")
         feed_rules = "\n".join([r[0] for r in ws_feed.get_all_values() if r])
+
+        if DEBUG_MODE:
+            st.info(f"✅ Loaded {len(gen_rules)} chars of general rules, {len(cat_rules_text)} chars of category rules")
 
         return gen_rules, cat_rules_text, feed_rules
 
@@ -232,6 +268,9 @@ def perform_research(merchant_name, category, location="Geneva", treatment_terms
             elif "elle" in domain or "vogue" in domain or "cosmo" in domain: source_label = "FASHION MAGAZINE"
 
             context_data.append(f"SOURCE: {source_label}\nURL: {url}\nTITLE: {title}\nSNIPPET: {content}\n-------------------")
+        
+        if DEBUG_MODE:
+            st.info(f"✅ Found {len(context_data)} unique research results from {len(queries)} queries")
             
         return "\n".join(context_data)
     except Exception as e:
@@ -281,14 +320,23 @@ def analyze_with_gemini(scraped_txt, prev_txt, contract_txt, search_data, gen_ru
         response = model.generate_content(user_prompt)
         return response.text
     except Exception as e:
-        return f"FATAL ERROR: {str(e)}"
+        # IMPROVEMENT #10: Better Gemini error handling
+        error_str = str(e).lower()
+        if "quota" in error_str or "rate" in error_str or "resource" in error_str:
+            return "FATAL ERROR: API rate limit exceeded. Please try again in a few minutes."
+        elif "safety" in error_str or "blocked" in error_str:
+            return "FATAL ERROR: Content was flagged by safety filters. Try rephrasing your input or contact support."
+        elif "invalid" in error_str and "api" in error_str:
+            return "FATAL ERROR: API key issue. Please verify your GOOGLE_API_KEY in secrets."
+        else:
+            return f"FATAL ERROR: {str(e)}"
 
 def archive_report(sheet_obj, deal_name, category, report_text):
     """Parses score and saves full report to Archive tab."""
     try:
         ws = sheet_obj.worksheet("Analysis_Archive")
-        import re
-        score_match = re.search(r"Score.*?(\d{1,3})", report_text)
+        # IMPROVEMENT #4: More robust score regex
+        score_match = re.search(r"Score[:\s]+(\d{1,3})(?:\D|$)", report_text, re.IGNORECASE)
         score = score_match.group(1) if score_match else "N/A"
         
         ws.append_row([
@@ -298,7 +346,8 @@ def archive_report(sheet_obj, deal_name, category, report_text):
             score,
             report_text
         ])
-        st.toast("✅ Report archived successfully!", icon="💾")
+        # IMPROVEMENT #9: Better feedback on what was saved
+        st.toast(f"✅ '{deal_name}' (Score: {score}) archived successfully!", icon="💾")
     except Exception as e:
         st.error(f"Archiving failed: {e}")
 
@@ -306,7 +355,7 @@ def save_feedback_rule(sheet_obj, rule_text):
     try:
         ws = sheet_obj.worksheet("Feedback_Log")
         ws.append_row([rule_text, datetime.now().strftime("%Y-%m-%d")])
-        st.success("Rule learned and saved to Feedback Log.")
+        st.success("✅ Rule learned and saved to Feedback Log.")
     except Exception as e:
         st.error(f"Failed to save rule: {e}")
 
@@ -321,7 +370,7 @@ with col_a1:
 with col_a2:
     merchant_name = st.text_input("Merchant / Venue Name (For Search)", placeholder="e.g. Amore Amore")
 with col_a3:
-    # SAFE CATEGORY LOADING
+    # Safe category loading that won't crash if sheets unavailable
     category_options = ["General"]
     if sh:
         try:
@@ -345,7 +394,11 @@ with col_c1:
     prev_url = st.text_input("Previous Deal URL (Optional)", placeholder="https://buyclub.ch/...")
     contract_file = st.file_uploader("Contract / Sale Conditions", type=['pdf', 'txt'])
 with col_c2:
-    treatment_term = st.text_input("Treatment(s) (For Spas - Optional)", placeholder="e.g. Microneedling, Botox")
+    # IMPROVEMENT #8: Make search keywords generic, only show treatment field for Spas
+    if category and "Spa" in category:
+        treatment_term = st.text_input("Treatment(s) - For Magazine Search", placeholder="e.g. Microneedling, Botox")
+    else:
+        treatment_term = ""
     specific_instructions = st.text_area("Specific Instructions (Logic)", height=70)
 
 analyze_btn = st.button("Analyze Page", type="primary", use_container_width=True)
@@ -358,45 +411,52 @@ if analyze_btn:
     if not archive_name or not merchant_name or not page_url:
         st.error("Archive Name, Merchant Name, and Page URL are mandatory.")
     else:
-        # CLEAR OLD RESULTS
-        st.session_state.analysis_result = None
-        st.session_state.current_archive_name = ""
-        st.session_state.current_category = ""
-        
-        with st.status("Running Compliance Analysis...", expanded=True) as status:
-            status.write("🧠 Accessing Hive Mind...")
-            gen_rules, cat_rules, feed_log = get_rules(sh, category)
+        # IMPROVEMENT #5: Rate limiting (10 second cooldown)
+        time_since_last = time.time() - st.session_state.last_analysis_time
+        if time_since_last < 10:
+            st.warning(f"⏳ Please wait {int(10 - time_since_last)} seconds before analyzing again.")
+        else:
+            st.session_state.last_analysis_time = time.time()
             
-            status.write("🕷️ Scraping Content...")
-            scraped_text = scrape_url(page_url)
+            # Clear old results at START of new analysis
+            st.session_state.analysis_result = None
+            st.session_state.current_archive_name = ""
+            st.session_state.current_category = ""
             
-            # CATCH SCRAPING ERRORS
-            if scraped_text.startswith("Error scraping"):
-                st.error(f"Failed to scrape page: {scraped_text}")
-                status.update(label="❌ Scraping Failed", state="error", expanded=False)
-                st.stop()
-            
-            prev_text = scrape_url(prev_url) if prev_url else "N/A"
-            contract_text = extract_text_from_file(contract_file)
-            
-            # Use explicit Merchant Name + Location for search
-            status.write(f"🕵️‍♂️ Researching '{merchant_name}' in {location}...")
-            search_results = perform_research(merchant_name, category, location, treatment_term)
-            
-            status.write("🤖 Analyzing...")
-            # LOADING INDICATOR
-            with st.spinner("Waiting for Gemini response..."):
-                report = analyze_with_gemini(
-                    scraped_text, prev_text, contract_text, search_results, 
-                    gen_rules, cat_rules, feed_log, specific_instructions
-                )
-            
-            # SAVE TO MEMORY
-            st.session_state.analysis_result = report
-            st.session_state.current_archive_name = archive_name
-            st.session_state.current_category = category
-            
-            status.update(label="✅ Analysis Complete", state="complete", expanded=False)
+            with st.status("Running Compliance Analysis...", expanded=True) as status:
+                status.write("🧠 Accessing Hive Mind...")
+                gen_rules, cat_rules, feed_log = get_rules("BuyClub_Page_Analyzer_Brain", category)
+                
+                status.write("🕷️ Scraping Content...")
+                scraped_text = scrape_url(page_url)
+                
+                # Catch scraping errors early
+                if scraped_text.startswith("Error scraping"):
+                    st.error(f"Failed to scrape page: {scraped_text}")
+                    status.update(label="❌ Scraping Failed", state="error", expanded=False)
+                    st.stop()
+                
+                prev_text = scrape_url(prev_url) if prev_url else "N/A"
+                contract_text = extract_text_from_file(contract_file)
+                
+                # Use explicit Merchant Name + Location for search
+                status.write(f"🕵️‍♂️ Researching '{merchant_name}' in {location}...")
+                search_results = perform_research(merchant_name, category, location, treatment_term)
+                
+                status.write("🤖 Analyzing...")
+                # Add loading indicator for Gemini
+                with st.spinner("Waiting for Gemini response..."):
+                    report = analyze_with_gemini(
+                        scraped_text, prev_text, contract_text, search_results, 
+                        gen_rules, cat_rules, feed_log, specific_instructions
+                    )
+                
+                # Save to session state
+                st.session_state.analysis_result = report
+                st.session_state.current_archive_name = archive_name
+                st.session_state.current_category = category
+                
+                status.update(label="✅ Analysis Complete", state="complete", expanded=False)
 
 # ==============================================================================
 # DISPLAY REPORT & ACTIONS
@@ -410,7 +470,10 @@ if st.session_state.analysis_result:
     with col_act1:
         if st.button("💾 Save to Archive", use_container_width=True):
             if sh:
-                archive_report(sh, st.session_state.current_archive_name, st.session_state.current_category, st.session_state.analysis_result)
+                with st.spinner("Saving to Google Sheets..."):
+                    archive_report(sh, st.session_state.current_archive_name, st.session_state.current_category, st.session_state.analysis_result)
+            else:
+                st.error("Cannot save: Google Sheets connection unavailable")
     
     with col_act2:
         if st.button("🗑️ Trash / Clear", use_container_width=True):
@@ -418,7 +481,7 @@ if st.session_state.analysis_result:
             st.session_state.current_archive_name = ""
             st.session_state.current_category = ""
 
-    # CHECK FOR NONE BEFORE DISPLAYING (CRASH FIX)
+    # Check for None before displaying (prevents crash when trash button clicked)
     if st.session_state.analysis_result:
         st.markdown("---")
         
@@ -441,3 +504,8 @@ with st.expander("🧠 Teach the App (Add to Feedback Log)"):
             save_feedback_rule(sh, new_rule)
         elif not sh:
             st.error("Database not connected.")
+
+# Debug info footer
+if DEBUG_MODE:
+    st.markdown("---")
+    st.caption("🔧 Debug Mode Active | Check info boxes above for detailed logs")
