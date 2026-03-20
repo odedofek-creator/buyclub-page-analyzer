@@ -11,6 +11,7 @@ from datetime import datetime
 import io
 import re
 import time
+from PIL import Image
 
 # ==============================================================================
 # CONFIGURATION & SETUP
@@ -25,30 +26,25 @@ DEBUG_MODE = st.secrets.get("DEBUG_MODE", "false").lower() == "true"
 def check_password():
     """Returns `True` if the user had the correct password."""
 
-    # 1. Initialize State
     if "password_correct" not in st.session_state:
         st.session_state.password_correct = False
 
-    # 2. If already logged in, return True immediately
     if st.session_state.password_correct:
         return True
 
-    # 3. Show the Login Form
     with st.form("login_form"):
         st.header("🔒 Login Required")
         password_input = st.text_input("Enter Password", type="password")
         submit_button = st.form_submit_button("Login", type="primary")
 
-    # 4. Check Password ONLY when button is clicked
     if submit_button:
         if password_input == st.secrets["APP_PASSWORD"]:
             st.session_state.password_correct = True
-            st.rerun()  # Force reload to show app
+            st.rerun() 
         else:
             st.error("😕 Password incorrect")
-            time.sleep(1)  # Security delay
+            time.sleep(1)
 
-    # 5. If we reach here, user is not logged in yet
     return False
 
 if not check_password():
@@ -61,7 +57,7 @@ if not all(k in st.secrets for k in required_secrets):
     st.error("🚨 Missing API Keys in .streamlit/secrets.toml")
     st.stop()
 
-# Initialize APIs (IMPROVEMENT #1: Better error handling - no key leakage)
+# Initialize APIs
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     tavily = TavilyClient(api_key=st.secrets["TAVILY_API_KEY"])
@@ -97,7 +93,6 @@ if 'current_archive_name' not in st.session_state:
     st.session_state.current_archive_name = ""
 if 'current_category' not in st.session_state:
     st.session_state.current_category = ""
-# IMPROVEMENT #5: Rate limiting
 if 'last_analysis_time' not in st.session_state:
     st.session_state.last_analysis_time = 0
 
@@ -107,13 +102,11 @@ if 'last_analysis_time' not in st.session_state:
 
 def scrape_url(url):
     """Basic text extraction from a URL."""
-    # IMPROVEMENT #3: URL validation
     if not url or not url.startswith(('http://', 'https://')):
         return "Error scraping URL: Invalid URL format (must start with http:// or https://)"
     
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        # IMPROVEMENT #7: Longer timeout for slow pages
         response = requests.get(url, headers=headers, timeout=20)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
@@ -132,7 +125,7 @@ def scrape_url(url):
         return f"Error scraping URL: {str(e)}"
 
 def extract_text_from_file(uploaded_file):
-    """Extracts text from PDF or TXT."""
+    """Extracts text from PDF, TXT, or Image (JPEG/PNG)."""
     if uploaded_file is None:
         return ""
     
@@ -142,10 +135,23 @@ def extract_text_from_file(uploaded_file):
             reader = PyPDF2.PdfReader(uploaded_file)
             for page in reader.pages:
                 text += page.extract_text() + "\n"
+                
         elif uploaded_file.type == "text/plain":
             text = uploaded_file.read().decode("utf-8")
+            
+        elif uploaded_file.type in ["image/jpeg", "image/png", "image/jpg"]:
+            image = Image.open(uploaded_file)
+            ocr_model = genai.GenerativeModel('gemini-2.5-flash')
+            ocr_response = ocr_model.generate_content([
+                "Extract all the text from this contract/document exactly as it appears. Do not add any extra commentary.", 
+                image
+            ])
+            text = ocr_response.text
+            if DEBUG_MODE:
+                st.info(f"👁️ Gemini Vision extracted text from image.")
+                
         else:
-            text = "[Image/Unsupported File Uploaded - Content not readable by this script version]"
+            text = "[Unsupported File Uploaded]"
         
         if DEBUG_MODE and text:
             st.info(f"✅ Extracted {len(text)} characters from uploaded file")
@@ -154,11 +160,9 @@ def extract_text_from_file(uploaded_file):
         text = f"Error reading file: {e}"
     return text
 
-# IMPROVEMENT #2: Cache rules for 5 minutes
 @st.cache_data(ttl=300)
 def get_rules(sheet_name, category):
     """Fetches General Rules, Specific Category Rules, and Feedback."""
-    # Re-initialize sheet connection inside cached function
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
@@ -198,42 +202,30 @@ def get_rules(sheet_name, category):
 def perform_research(merchant_name, category, location="Geneva", treatment_terms=""):
     """
     Context-Aware Research.
-    Uses 'merchant_name' + 'location' for searching.
     """
     try:
         banned_domains = ["wanderlog.com", "restaurantguru.com", "sluurpy.com", "top10.com", "trip.com"]
-        
-        # 1. Base Search (Universal) - Uses dynamic location
         queries = [f"{merchant_name} {location} google reviews official website"]
         
-        # 2. Category Specific Searches
         if category and "Restaurant" in category:
-            # A. Check French-Swiss Michelin & Gault Millau
             queries.append(f"site:guide.michelin.com/ch/fr {merchant_name}")
             queries.append(f"site:gaultmillau.ch/fr {merchant_name}")
-            
-            # B. Trusted Swiss News (Excluding Blogs)
             queries.append(f"site:lematin.ch OR site:20min.ch OR site:tdg.ch OR site:letemps.ch {merchant_name}")
             
         elif category and "Hotel" in category:
-            # HOTELS
             queries.append(f"site:booking.com {merchant_name} {location} reviews")
             queries.append(f"site:tripadvisor.com {merchant_name} \"Certificate of Excellence\"")
 
         elif category and "Spa" in category:
-            # SPAS: Check Magazines for TREATMENT
             search_scope = f"site:elle.com OR site:cosmopolitan.com OR site:vogue.com OR site:marieclaire.com"
-            
             if treatment_terms:
-                # If user entered "Microneedling, Botox" -> construct ("Microneedling" OR "Botox")
+                # ONLY search for treatments in the magazines (ignoring merchant name for this specific query)
                 terms = [t.strip() for t in treatment_terms.split(',')]
                 joined_terms = " OR ".join(f'"{t}"' for t in terms)
                 queries.append(f"{search_scope} ({joined_terms})")
             else:
-                # Fallback
                 queries.append(f"{search_scope} {merchant_name}")
 
-        # 3. Execute Searches
         all_results = []
         for q in queries:
             try:
@@ -242,7 +234,6 @@ def perform_research(merchant_name, category, location="Geneva", treatment_terms
             except:
                 continue
         
-        # 4. Filter & Format
         context_data = []
         seen_urls = set()
 
@@ -250,7 +241,6 @@ def perform_research(merchant_name, category, location="Geneva", treatment_terms
             url = result['url']
             title = result['title']
             content = result['content']
-            
             domain = url.split('/')[2] if '//' in url else url.split('/')[0]
             
             if url in seen_urls: continue
@@ -282,6 +272,9 @@ def analyze_with_gemini(scraped_txt, prev_txt, contract_txt, search_data, gen_ru
     You are a strict Compliance Officer for 'BuyClub'. 
     Your Core Directive: Verify accuracy, enforce consistency, and identify marketing opportunities.
     
+    CRITICAL RULE FOR CONTRACTS:
+    If you receive both [PASTED TEXT] and an [UPLOADED FILE], you must use both sources to understand the deal. HOWEVER, if there is ANY contradiction between the two sources, the [PASTED TEXT] is the absolute truth and strictly overrides the [UPLOADED FILE].
+    
     INPUTS:
     1. Input text may be in French or English.
     2. TRANSLATE all internal logic to English.
@@ -309,7 +302,10 @@ def analyze_with_gemini(scraped_txt, prev_txt, contract_txt, search_data, gen_ru
     [GENERAL RULES]: {gen_rules}
     [FEEDBACK LOG]: {feed_log}
     [SPECIFIC INSTRUCTIONS]: {specific_instr}
-    [CONTRACT TEXT]: {contract_txt}
+    
+    [CONTRACT TEXT]: 
+    {contract_txt}
+    
     [PREVIOUS DEAL TEXT]: {prev_txt}
     [CURRENT PAGE TEXT (TARGET)]: {scraped_txt}
     [EXTERNAL SEARCH RESEARCH]: {search_data}
@@ -320,7 +316,6 @@ def analyze_with_gemini(scraped_txt, prev_txt, contract_txt, search_data, gen_ru
         response = model.generate_content(user_prompt)
         return response.text
     except Exception as e:
-        # IMPROVEMENT #10: Better Gemini error handling
         error_str = str(e).lower()
         if "quota" in error_str or "rate" in error_str or "resource" in error_str:
             return "FATAL ERROR: API rate limit exceeded. Please try again in a few minutes."
@@ -335,7 +330,6 @@ def archive_report(sheet_obj, deal_name, category, report_text):
     """Parses score and saves full report to Archive tab."""
     try:
         ws = sheet_obj.worksheet("Analysis_Archive")
-        # IMPROVEMENT #4: More robust score regex
         score_match = re.search(r"Score[:\s]+(\d{1,3})(?:\D|$)", report_text, re.IGNORECASE)
         score = score_match.group(1) if score_match else "N/A"
         
@@ -346,7 +340,6 @@ def archive_report(sheet_obj, deal_name, category, report_text):
             score,
             report_text
         ])
-        # IMPROVEMENT #9: Better feedback on what was saved
         st.toast(f"✅ '{deal_name}' (Score: {score}) archived successfully!", icon="💾")
     except Exception as e:
         st.error(f"Archiving failed: {e}")
@@ -370,7 +363,6 @@ with col_a1:
 with col_a2:
     merchant_name = st.text_input("Merchant / Venue Name (For Search)", placeholder="e.g. Amore Amore")
 with col_a3:
-    # Safe category loading that won't crash if sheets unavailable
     category_options = ["General"]
     if sh:
         try:
@@ -392,14 +384,16 @@ with col_b2:
 col_c1, col_c2 = st.columns(2)
 with col_c1:
     prev_url = st.text_input("Previous Deal URL (Optional)", placeholder="https://buyclub.ch/...")
-    contract_file = st.file_uploader("Contract / Sale Conditions", type=['pdf', 'txt'])
+    
+    contract_file = st.file_uploader("Upload Contract File", type=['pdf', 'txt', 'png', 'jpg', 'jpeg'])
+    contract_pasted = st.text_area("Or Paste Contract Text (Overrides File if Conflicts Exist)", height=68, placeholder="Paste contract text here...")
+    
 with col_c2:
-    # IMPROVEMENT #8: Make search keywords generic, only show treatment field for Spas
     if category and "Spa" in category:
         treatment_term = st.text_input("Treatment(s) - For Magazine Search", placeholder="e.g. Microneedling, Botox")
     else:
         treatment_term = ""
-    specific_instructions = st.text_area("Specific Instructions (Logic)", height=70)
+    specific_instructions = st.text_area("Specific Instructions (Logic)", height=155)
 
 analyze_btn = st.button("Analyze Page", type="primary", use_container_width=True)
 
@@ -411,14 +405,12 @@ if analyze_btn:
     if not archive_name or not merchant_name or not page_url:
         st.error("Archive Name, Merchant Name, and Page URL are mandatory.")
     else:
-        # IMPROVEMENT #5: Rate limiting (10 second cooldown)
         time_since_last = time.time() - st.session_state.last_analysis_time
         if time_since_last < 10:
             st.warning(f"⏳ Please wait {int(10 - time_since_last)} seconds before analyzing again.")
         else:
             st.session_state.last_analysis_time = time.time()
             
-            # Clear old results at START of new analysis
             st.session_state.analysis_result = None
             st.session_state.current_archive_name = ""
             st.session_state.current_category = ""
@@ -430,28 +422,45 @@ if analyze_btn:
                 status.write("🕷️ Scraping Content...")
                 scraped_text = scrape_url(page_url)
                 
-                # Catch scraping errors early
                 if scraped_text.startswith("Error scraping"):
                     st.error(f"Failed to scrape page: {scraped_text}")
                     status.update(label="❌ Scraping Failed", state="error", expanded=False)
                     st.stop()
                 
                 prev_text = scrape_url(prev_url) if prev_url else "N/A"
-                contract_text = extract_text_from_file(contract_file)
                 
-                # Use explicit Merchant Name + Location for search
-                status.write(f"🕵️‍♂️ Researching '{merchant_name}' in {location}...")
+                status.write("📄 Processing Contract Data...")
+                
+                # SMART CONTRACT EXTRACTION & COMBINATION
+                contract_text_from_file = extract_text_from_file(contract_file)
+                if contract_text_from_file.startswith("Error"):
+                    contract_text_from_file = ""
+                    
+                contract_text = ""
+                if contract_pasted.strip() and contract_text_from_file:
+                    contract_text = f"[PASTED TEXT (ABSOLUTE TRUTH - OVERRIDES UPLOADED FILE)]:\n{contract_pasted.strip()}\n\n[UPLOADED FILE]:\n{contract_text_from_file}"
+                elif contract_pasted.strip():
+                    contract_text = f"[PASTED TEXT]:\n{contract_pasted.strip()}"
+                elif contract_text_from_file:
+                    contract_text = f"[UPLOADED FILE]:\n{contract_text_from_file}"
+                else:
+                    contract_text = "N/A"
+                
+                # DYNAMIC SEARCH STATUS MESSAGE
+                if category and "Spa" in category and treatment_term:
+                    status.write(f"🕵️‍♂️ Researching Venue '{merchant_name}' & Magazine Treatments '{treatment_term}'...")
+                else:
+                    status.write(f"🕵️‍♂️ Researching '{merchant_name}' in {location}...")
+                    
                 search_results = perform_research(merchant_name, category, location, treatment_term)
                 
                 status.write("🤖 Analyzing...")
-                # Add loading indicator for Gemini
                 with st.spinner("Waiting for Gemini response..."):
                     report = analyze_with_gemini(
                         scraped_text, prev_text, contract_text, search_results, 
                         gen_rules, cat_rules, feed_log, specific_instructions
                     )
                 
-                # Save to session state
                 st.session_state.analysis_result = report
                 st.session_state.current_archive_name = archive_name
                 st.session_state.current_category = category
@@ -464,7 +473,6 @@ if analyze_btn:
 
 if st.session_state.analysis_result:
     
-    # --- ACTION BUTTONS (ON TOP) ---
     col_act1, col_act2 = st.columns(2)
     
     with col_act1:
@@ -481,12 +489,9 @@ if st.session_state.analysis_result:
             st.session_state.current_archive_name = ""
             st.session_state.current_category = ""
 
-    # Check for None before displaying (prevents crash when trash button clicked)
     if st.session_state.analysis_result:
         st.markdown("---")
-        
         st.markdown("### 📋 Compliance Report")
-        
         if "FATAL ERROR" in st.session_state.analysis_result:
             st.error(st.session_state.analysis_result)
         else:
@@ -505,7 +510,6 @@ with st.expander("🧠 Teach the App (Add to Feedback Log)"):
         elif not sh:
             st.error("Database not connected.")
 
-# Debug info footer
 if DEBUG_MODE:
     st.markdown("---")
     st.caption("🔧 Debug Mode Active | Check info boxes above for detailed logs")
