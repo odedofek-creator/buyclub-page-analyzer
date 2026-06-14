@@ -440,7 +440,7 @@ with tab1:
         try:
             search_url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
 
-            # Try 1: name + city
+            # Try 1: name + city (English)
             r = requests.get(search_url, params={
                 "query": f"{venue_name} {city}",
                 "key": places_key
@@ -448,10 +448,22 @@ with tab1:
             r.raise_for_status()
             data = r.json()
             if DEBUG_MODE:
-                st.info(f"Google Places Try 1 status: {data.get('status')} | results: {len(data.get('results', []))}")
+                st.info(f"Google Places Try 1 ({venue_name} {city}) status: {data.get('status')} | results: {len(data.get('results', []))}")
             results = data.get("results", [])
 
-            # Try 2: name + address
+            # Try 2: name + Genève (French — important for Swiss French listings)
+            if not results:
+                r = requests.get(search_url, params={
+                    "query": f"{venue_name} Genève",
+                    "key": places_key
+                }, timeout=10)
+                r.raise_for_status()
+                data = r.json()
+                if DEBUG_MODE:
+                    st.info(f"Google Places Try 2 ({venue_name} Genève) status: {data.get('status')} | results: {len(data.get('results', []))}")
+                results = data.get("results", [])
+
+            # Try 3: name + address
             if not results and address and address.upper() != "NOT FOUND":
                 r = requests.get(search_url, params={
                     "query": f"{venue_name} {address}",
@@ -460,10 +472,10 @@ with tab1:
                 r.raise_for_status()
                 data = r.json()
                 if DEBUG_MODE:
-                    st.info(f"Google Places Try 2 (name+address) status: {data.get('status')} | results: {len(data.get('results', []))}")
+                    st.info(f"Google Places Try 3 (name+address) status: {data.get('status')} | results: {len(data.get('results', []))}")
                 results = data.get("results", [])
 
-            # Try 3: address only
+            # Try 4: address only
             if not results and address and address.upper() != "NOT FOUND":
                 r = requests.get(search_url, params={
                     "query": address,
@@ -472,12 +484,12 @@ with tab1:
                 r.raise_for_status()
                 data = r.json()
                 if DEBUG_MODE:
-                    st.info(f"Google Places Try 3 (address only) status: {data.get('status')} | results: {len(data.get('results', []))}")
+                    st.info(f"Google Places Try 4 (address only) status: {data.get('status')} | results: {len(data.get('results', []))}")
                 results = data.get("results", [])
 
             if not results:
                 if DEBUG_MODE:
-                    st.warning(f"Google Places: all 3 attempts returned no results. Last API status: {data.get('status')} | error: {data.get('error_message', 'none')}")
+                    st.warning(f"Google Places: all attempts failed. Last status: {data.get('status')} | error: {data.get('error_message', 'none')}")
                 return None
             place_id = results[0]["place_id"]
 
