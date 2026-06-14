@@ -553,12 +553,16 @@ OUTPUT STRUCTURE (use these exact section headers):
         system_prompt = f"""You are a Marketing Researcher for BuyClub, a premium members-only deals platform in Geneva and Lausanne.
 Your job is to produce a sourced marketing brief about a venue or treatment to help a copywriter write a compelling deal page.
 
-RULES:
-- Every factual claim about the venue must be backed by a real URL from the research data. No invention.
-- Treatment descriptions and general benefit information (not specific to the venue) may draw on your own knowledge — label these clearly as "General Information".
+CITATION RULES — MANDATORY:
+- Every factual claim about the venue must include a real clickable markdown link: [source name](full URL). No URL = do not include the claim.
+- Ratings (Google, TripAdvisor, etc.) must only be cited if found directly on that platform's own domain (google.com, tripadvisor.com). If a rating is mentioned on a third-party site (e.g. Instagram, a blog, another clinic), label it clearly: "Reported as X stars (unverified — source: [name](url))".
+- Clinical and scientific claims must come from peer-reviewed journals, government health agencies (FDA, WHO, ANSM), or official hospital/university publications. Claims from beauty clinic websites, influencer articles, or commercial sites do NOT count as scientific backing — omit them or move them to General Information.
+- General Information (treatment descriptions, mechanisms, generic benefits from your training knowledge) does not need a URL but must be clearly labeled as "General Information".
 - Ignore low-authority sources: personal blogs, forum posts, aggregators.
+
+OUTPUT RULES:
 - If a section has no findings, write "Not found." under that header — do not skip it.
-- Be specific and useful. The copywriter needs real claims they can use.
+- Be specific and useful. The copywriter needs real claims they can use on a deal page.
 - Output in English only.
 
 {output_structure}"""
@@ -606,22 +610,8 @@ RESEARCH DATA:
     # FORM
     # --------------------------------------------------------------------------
 
-    r_col1, r_col2 = st.columns([1.5, 1.5])
-    with r_col1:
-        r_deal_name = st.text_input("Deal Name (For Archive)", placeholder="e.g. Amore Amore June 2026", key="r_deal_name")
-    with r_col2:
-        r_venue_url = st.text_input("Venue Website URL (Optional)", placeholder="https://venue-website.com", key="r_venue_url")
-
-    r_col3, r_col4, r_col5 = st.columns([2, 1, 1])
-    with r_col3:
-        r_venue_name = st.text_input("Merchant / Venue Name", placeholder="Auto-filled from URL, or enter manually", key="r_venue_name")
-    with r_col4:
-        r_country = st.selectbox("Country", ["Switzerland", "France", "Other"], key="r_country")
-    with r_col5:
-        r_city = st.text_input("City", value="Geneva", key="r_city")
-
-    r_col6, r_col7 = st.columns([1, 2])
-    with r_col6:
+    r_col_cat, r_col_deal = st.columns([1, 2])
+    with r_col_cat:
         r_category_options = ["General"]
         if sh:
             try:
@@ -631,11 +621,23 @@ RESEARCH DATA:
             except Exception:
                 pass
         r_category = st.selectbox("Category", r_category_options, key="r_category")
-    with r_col7:
-        if r_category and ("Simple Beauty Treatment" in r_category or "High-Tech Aesthetic Treatment" in r_category):
-            r_treatments = st.text_input("Treatment(s) — comma-separated", placeholder="e.g. Microneedling, PRP", key="r_treatments")
-        else:
-            r_treatments = ""
+    with r_col_deal:
+        r_deal_name = st.text_input("Deal Name (For Archive)", placeholder="e.g. Amore Amore June 2026", key="r_deal_name")
+
+    r_venue_url = st.text_input("Venue Website URL (Optional)", placeholder="https://venue-website.com", key="r_venue_url")
+
+    r_col3, r_col4, r_col5 = st.columns([2, 1, 1])
+    with r_col3:
+        r_venue_name = st.text_input("Merchant / Venue Name", placeholder="Auto-filled from URL, or enter manually", key="r_venue_name")
+    with r_col4:
+        r_country = st.selectbox("Country", ["Switzerland", "France", "Other"], key="r_country")
+    with r_col5:
+        r_city = st.text_input("City", value="Geneva", key="r_city")
+
+    if r_category and ("Simple Beauty Treatment" in r_category or "High-Tech Aesthetic Treatment" in r_category):
+        r_treatments = st.text_input("Treatment(s) — comma-separated", placeholder="e.g. Microneedling, PRP", key="r_treatments")
+    else:
+        r_treatments = ""
 
     r_special = st.text_area("Special Instructions (Optional)", height=80, key="r_special")
 
@@ -665,12 +667,38 @@ RESEARCH DATA:
                     if crawl_content:
                         extracted_name, extracted_city = extract_name_and_city_from_crawl(crawl_content)
 
+                        # Normalize text for comparison: lowercase + remove accents
+                        def normalize(text):
+                            replacements = {"é":"e","è":"e","ê":"e","ë":"e","à":"a","â":"a","ä":"a","î":"i","ï":"i","ô":"o","ö":"o","ù":"u","û":"u","ü":"u","ç":"c"}
+                            t = text.lower().strip()
+                            for accented, plain in replacements.items():
+                                t = t.replace(accented, plain)
+                            return t
+
+                        # Known city aliases (pairs that should not trigger a conflict)
+                        city_aliases = [
+                            {"geneva", "geneve", "genf"},
+                            {"zurich", "zurich"},
+                            {"bern", "berne"},
+                            {"basel", "bale"},
+                            {"lausanne"},
+                        ]
+
+                        def cities_match(a, b):
+                            na, nb = normalize(a), normalize(b)
+                            if na == nb:
+                                return True
+                            for alias_group in city_aliases:
+                                if na in alias_group and nb in alias_group:
+                                    return True
+                            return False
+
                         # Conflict detection: flag if extracted values differ from manual input
                         if resolved_name and extracted_name != "NOT FOUND":
-                            if extracted_name.lower().strip() != resolved_name.lower().strip():
+                            if normalize(extracted_name) != normalize(resolved_name):
                                 st.warning(f"⚠️ **Name conflict:** URL crawl found **\"{extracted_name}\"** but you entered **\"{resolved_name}\"**. Proceeding with your manual entry — double-check that the URL is for the right venue.")
                         if r_city.strip() and extracted_city != "NOT FOUND":
-                            if extracted_city.lower().strip() != r_city.lower().strip():
+                            if not cities_match(extracted_city, r_city.strip()):
                                 st.warning(f"⚠️ **City conflict:** URL crawl found **\"{extracted_city}\"** but you entered **\"{r_city.strip()}\"**. Proceeding with your manual entry.")
 
                         # Auto-fill only if manual fields are empty
