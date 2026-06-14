@@ -434,51 +434,52 @@ with tab1:
         """Fetch rating, review count, review snippets, and neighborhood via Google Places API."""
         places_key = st.secrets.get("Google_Places_API_Key", "")
         if not places_key:
+            if DEBUG_MODE:
+                st.warning("Google Places: no key found in secrets (Google_Places_API_Key)")
             return None
         try:
-            find_url = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
-
-            # Geneva/Lausanne center coordinates for locationbias
-            location_bias = "circle:20000@46.2044,6.1432"
+            search_url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
 
             # Try 1: name + city
-            r = requests.get(find_url, params={
-                "input": f"{venue_name} {city}",
-                "inputtype": "textquery",
-                "fields": "place_id",
-                "locationbias": location_bias,
+            r = requests.get(search_url, params={
+                "query": f"{venue_name} {city}",
                 "key": places_key
             }, timeout=10)
             r.raise_for_status()
-            candidates = r.json().get("candidates", [])
+            data = r.json()
+            if DEBUG_MODE:
+                st.info(f"Google Places Try 1 status: {data.get('status')} | results: {len(data.get('results', []))}")
+            results = data.get("results", [])
 
-            # Try 2: name + address (more precise if crawl found the address)
-            if not candidates and address and address.upper() != "NOT FOUND":
-                r = requests.get(find_url, params={
-                    "input": f"{venue_name} {address}",
-                    "inputtype": "textquery",
-                    "fields": "place_id",
-                    "locationbias": location_bias,
+            # Try 2: name + address
+            if not results and address and address.upper() != "NOT FOUND":
+                r = requests.get(search_url, params={
+                    "query": f"{venue_name} {address}",
                     "key": places_key
                 }, timeout=10)
                 r.raise_for_status()
-                candidates = r.json().get("candidates", [])
+                data = r.json()
+                if DEBUG_MODE:
+                    st.info(f"Google Places Try 2 (name+address) status: {data.get('status')} | results: {len(data.get('results', []))}")
+                results = data.get("results", [])
 
-            # Try 3: address only (catches name mismatches)
-            if not candidates and address and address.upper() != "NOT FOUND":
-                r = requests.get(find_url, params={
-                    "input": address,
-                    "inputtype": "textquery",
-                    "fields": "place_id",
-                    "locationbias": location_bias,
+            # Try 3: address only
+            if not results and address and address.upper() != "NOT FOUND":
+                r = requests.get(search_url, params={
+                    "query": address,
                     "key": places_key
                 }, timeout=10)
                 r.raise_for_status()
-                candidates = r.json().get("candidates", [])
+                data = r.json()
+                if DEBUG_MODE:
+                    st.info(f"Google Places Try 3 (address only) status: {data.get('status')} | results: {len(data.get('results', []))}")
+                results = data.get("results", [])
 
-            if not candidates:
+            if not results:
+                if DEBUG_MODE:
+                    st.warning(f"Google Places: all 3 attempts returned no results. Last API status: {data.get('status')} | error: {data.get('error_message', 'none')}")
                 return None
-            place_id = candidates[0]["place_id"]
+            place_id = results[0]["place_id"]
 
             details_url = "https://maps.googleapis.com/maps/api/place/details/json"
             r2 = requests.get(details_url, params={
