@@ -383,6 +383,8 @@ with tab1:
         st.session_state.research_country = ""
     if 'researcher_running' not in st.session_state:
         st.session_state.researcher_running = False
+    if 'run_research_pending' not in st.session_state:
+        st.session_state.run_research_pending = False
     if 'last_research_time' not in st.session_state:
         st.session_state.last_research_time = 0
 
@@ -400,21 +402,52 @@ with tab1:
         except Exception:
             return ""
 
-    def get_google_rating(venue_name, city):
+    def get_google_rating(venue_name, city, address=""):
         """Fetch rating, review count, review snippets, and neighborhood via Google Places API."""
         places_key = st.secrets.get("Google_Places_API_Key", "")
         if not places_key:
             return None
         try:
             find_url = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
+
+            # Geneva/Lausanne center coordinates for locationbias
+            location_bias = "circle:20000@46.2044,6.1432"
+
+            # Try 1: name + city
             r = requests.get(find_url, params={
                 "input": f"{venue_name} {city}",
                 "inputtype": "textquery",
                 "fields": "place_id",
+                "locationbias": location_bias,
                 "key": places_key
             }, timeout=10)
             r.raise_for_status()
             candidates = r.json().get("candidates", [])
+
+            # Try 2: name + address (more precise if crawl found the address)
+            if not candidates and address and address.upper() != "NOT FOUND":
+                r = requests.get(find_url, params={
+                    "input": f"{venue_name} {address}",
+                    "inputtype": "textquery",
+                    "fields": "place_id",
+                    "locationbias": location_bias,
+                    "key": places_key
+                }, timeout=10)
+                r.raise_for_status()
+                candidates = r.json().get("candidates", [])
+
+            # Try 3: address only (catches name mismatches)
+            if not candidates and address and address.upper() != "NOT FOUND":
+                r = requests.get(find_url, params={
+                    "input": address,
+                    "inputtype": "textquery",
+                    "fields": "place_id",
+                    "locationbias": location_bias,
+                    "key": places_key
+                }, timeout=10)
+                r.raise_for_status()
+                candidates = r.json().get("candidates", [])
+
             if not candidates:
                 return None
             place_id = candidates[0]["place_id"]
@@ -850,149 +883,171 @@ RESEARCH DATA:
     )
 
     # --------------------------------------------------------------------------
-    # MAIN LOGIC
+    # BUTTON CLICK — validate and queue, then rerun so button disables first
     # --------------------------------------------------------------------------
 
-    if research_btn:
-        if not r_deal_name:
+    if research_btn and not st.session_state.researcher_running:
+        _deal = st.session_state.get('r_deal_name', '').strip()
+        _name = st.session_state.get('r_venue_name', '').strip()
+        _url  = st.session_state.get('r_venue_url', '').strip()
+        if not _deal:
             st.error("Deal Name is required.")
-        elif not r_venue_name and not r_venue_url:
+        elif not _name and not _url:
             st.error("Provide either a Venue URL or a Venue Name.")
         elif time.time() - st.session_state.last_research_time < 5:
             st.warning("Please wait a moment before running again.")
         else:
             st.session_state.researcher_running = True
+            st.session_state.run_research_pending = True
             st.session_state.last_research_time = time.time()
             st.session_state.research_result = None
+            st.rerun()
 
-            with st.status("Running Research...", expanded=True) as r_status:
+    # --------------------------------------------------------------------------
+    # MAIN LOGIC — runs on the rerun AFTER button is visually disabled
+    # --------------------------------------------------------------------------
 
-                resolved_name = r_venue_name.strip()
-                resolved_city = r_city.strip()
-                crawl_content = ""
+    if st.session_state.run_research_pending:
+        st.session_state.run_research_pending = False
 
-                # Normalize text for comparison: lowercase + remove accents
-                def normalize(text):
-                    replacements = {"é":"e","è":"e","ê":"e","ë":"e","à":"a","â":"a","ä":"a","î":"i","ï":"i","ô":"o","ö":"o","ù":"u","û":"u","ü":"u","ç":"c"}
-                    t = text.lower().strip()
-                    for accented, plain in replacements.items():
-                        t = t.replace(accented, plain)
-                    return t
+        # Read all form values from session state (preserved via widget keys)
+        r_deal_name  = st.session_state.get('r_deal_name', '')
+        r_venue_url  = st.session_state.get('r_venue_url', '')
+        r_venue_name = st.session_state.get('r_venue_name', '')
+        r_country    = st.session_state.get('r_country', 'Switzerland')
+        r_city       = st.session_state.get('r_city', 'Geneva')
+        r_category   = st.session_state.get('r_category', 'General')
+        r_special    = st.session_state.get('r_special', '')
+        _cat = r_category
+        r_treatments = st.session_state.get('r_treatments', '') if ("Simple Beauty" in _cat or "High-Tech" in _cat) else ''
 
-                city_aliases = [
-                    {"geneva", "geneve", "genf"},
-                    {"zurich", "zurich"},
-                    {"bern", "berne"},
-                    {"basel", "bale"},
-                    {"lausanne"},
-                ]
+        with st.status("Running Research...", expanded=True) as r_status:
 
-                def cities_match(a, b):
-                    na, nb = normalize(a), normalize(b)
-                    if na == nb:
+            resolved_name = r_venue_name.strip()
+            resolved_city = r_city.strip()
+            crawl_content = ""
+
+            def normalize(text):
+                replacements = {"é":"e","è":"e","ê":"e","ë":"e","à":"a","â":"a","ä":"a","î":"i","ï":"i","ô":"o","ö":"o","ù":"u","û":"u","ü":"u","ç":"c"}
+                t = text.lower().strip()
+                for accented, plain in replacements.items():
+                    t = t.replace(accented, plain)
+                return t
+
+            city_aliases = [
+                {"geneva", "geneve", "genf"},
+                {"zurich", "zurich"},
+                {"bern", "berne"},
+                {"basel", "bale"},
+                {"lausanne"},
+            ]
+
+            def cities_match(a, b):
+                na, nb = normalize(a), normalize(b)
+                if na == nb:
+                    return True
+                for alias_group in city_aliases:
+                    if na in alias_group and nb in alias_group:
                         return True
-                    for alias_group in city_aliases:
-                        if na in alias_group and nb in alias_group:
-                            return True
-                    return False
+                return False
 
-                venue_details = {}
+            venue_details = {}
 
-                # URL-first: crawl and extract name/city + full details if URL provided
-                if r_venue_url:
-                    r_status.write("🌐 Crawling venue website...")
-                    crawl_content = crawl_venue_url(r_venue_url)
-                    if crawl_content:
-                        r_status.write("🔍 Extracting venue details from website...")
-                        venue_details = extract_venue_details_from_crawl(crawl_content, r_category, r_treatments)
-                        extracted_name = venue_details.get("NAME", "NOT FOUND")
-                        extracted_city = venue_details.get("CITY", "NOT FOUND")
+            # URL-first: crawl and extract name/city + full details if URL provided
+            if r_venue_url:
+                r_status.write("🌐 Crawling venue website...")
+                crawl_content = crawl_venue_url(r_venue_url)
+                if crawl_content:
+                    r_status.write("🔍 Extracting venue details from website...")
+                    venue_details = extract_venue_details_from_crawl(crawl_content, r_category, r_treatments)
+                    extracted_name = venue_details.get("NAME", "NOT FOUND")
+                    extracted_city = venue_details.get("CITY", "NOT FOUND")
 
-                        # Conflict detection
-                        if resolved_name and extracted_name != "NOT FOUND":
-                            if normalize(extracted_name) != normalize(resolved_name):
-                                st.warning(f"⚠️ **Name conflict:** URL crawl found **\"{extracted_name}\"** but you entered **\"{resolved_name}\"**. Proceeding with your manual entry.")
-                        if r_city.strip() and extracted_city != "NOT FOUND":
-                            if not cities_match(extracted_city, r_city.strip()):
-                                st.warning(f"⚠️ **City conflict:** URL crawl found **\"{extracted_city}\"** but you entered **\"{r_city.strip()}\"**. Proceeding with your manual entry.")
+                    if resolved_name and extracted_name != "NOT FOUND":
+                        if normalize(extracted_name) != normalize(resolved_name):
+                            st.warning(f"⚠️ **Name conflict:** URL crawl found **\"{extracted_name}\"** but you entered **\"{resolved_name}\"**. Proceeding with your manual entry.")
+                    if r_city.strip() and extracted_city != "NOT FOUND":
+                        if not cities_match(extracted_city, r_city.strip()):
+                            st.warning(f"⚠️ **City conflict:** URL crawl found **\"{extracted_city}\"** but you entered **\"{r_city.strip()}\"**. Proceeding with your manual entry.")
 
-                        # Auto-fill only if manual fields are empty
-                        if not resolved_name and extracted_name != "NOT FOUND":
-                            resolved_name = extracted_name
-                        if not r_city.strip() and extracted_city != "NOT FOUND":
-                            resolved_city = extracted_city
-                    else:
-                        r_status.write("⚠️ Could not crawl venue URL — using manually entered details.")
-
-                if not resolved_name:
-                    st.error("Could not determine venue name from URL. Please enter it manually.")
-                    r_status.update(label="❌ Missing venue name", state="error", expanded=False)
-                    st.session_state.researcher_running = False
-                    st.stop()
-
-                r_status.write(f"🕵️ Researching '{resolved_name}' in {resolved_city}...")
-                gen_rules_r, _, _ = get_rules("BuyClub_Page_Analyzer_Brain", r_category)
-
-                # Build structured venue details block from crawl extraction
-                venue_details_block = ""
-                if venue_details:
-                    field_labels = {
-                        "NAME": "Business Name", "CITY": "City", "NEIGHBORHOOD": "Neighborhood",
-                        "DATE_OPENED": "Date Opened", "ADDRESS": "Address", "PHONE": "Phone",
-                        "HOURS": "Opening Hours", "FACEBOOK": "Facebook", "INSTAGRAM": "Instagram",
-                        "STORY": "Brand Story / Marketing Pitch",
-                        "MENU_HIGHLIGHTS": "Menu Highlights", "TERRACE": "Terrace",
-                        "TREATMENT_DESCRIPTION": "Treatment Description",
-                        "TREATMENT_BENEFITS": "Treatment Benefits",
-                        "PRICING": "Pricing", "CONTRAINDICATIONS": "Contraindications",
-                    }
-                    lines = [f"SOURCE: VENUE WEBSITE (structured extraction)\nURL: {r_venue_url}"]
-                    for key, label in field_labels.items():
-                        val = venue_details.get(key, "")
-                        if val and val.upper() != "NOT FOUND":
-                            lines.append(f"{label}: {val}")
-                    venue_details_block = "\n".join(lines) + "\n-------------------\n"
-
-                # Google Places: rating, review snippets, neighborhood
-                r_status.write("⭐ Fetching Google rating...")
-                google_data = get_google_rating(resolved_name, resolved_city)
-                if google_data and google_data.get("rating"):
-                    maps_url = f"https://www.google.com/maps/search/{resolved_name.replace(' ', '+')}+{resolved_city.replace(' ', '+')}"
-                    google_block = (
-                        f"SOURCE: GOOGLE (Places API — verified)\nURL: {maps_url}\n"
-                        f"RATING: {google_data['rating']} stars ({google_data.get('count', 'N/A')} Google reviews)\n"
-                    )
-                    if google_data.get("neighborhood"):
-                        google_block += f"NEIGHBORHOOD (from Google): {google_data['neighborhood']}\n"
-                    if google_data.get("snippets"):
-                        google_block += "REVIEW SNIPPETS:\n" + "\n".join(f"- {s}" for s in google_data["snippets"])
-                    google_block += "\n-------------------\n"
+                    if not resolved_name and extracted_name != "NOT FOUND":
+                        resolved_name = extracted_name
+                    if not r_city.strip() and extracted_city != "NOT FOUND":
+                        resolved_city = extracted_city
                 else:
-                    google_block = "SOURCE: GOOGLE (Places API)\nNOTE: No data found for this venue on Google Places.\n-------------------\n"
-                    r_status.write("⚠️ Google Places returned no data. Check that the Google_Places_API_Key secret is set and the Places API is enabled on your Google Cloud project.")
+                    r_status.write("⚠️ Could not crawl venue URL — using manually entered details.")
 
-                tavily_data = perform_researcher_research(
-                    resolved_name, r_category, resolved_city, r_country, r_treatments, r_venue_url
+            if not resolved_name:
+                st.error("Could not determine venue name from URL. Please enter it manually.")
+                r_status.update(label="❌ Missing venue name", state="error", expanded=False)
+                st.session_state.researcher_running = False
+                st.stop()
+
+            r_status.write(f"🕵️ Researching '{resolved_name}' in {resolved_city}...")
+            gen_rules_r, _, _ = get_rules("BuyClub_Page_Analyzer_Brain", r_category)
+
+            # Build structured venue details block from crawl extraction
+            venue_details_block = ""
+            if venue_details:
+                field_labels = {
+                    "NAME": "Business Name", "CITY": "City", "NEIGHBORHOOD": "Neighborhood",
+                    "DATE_OPENED": "Date Opened", "ADDRESS": "Address", "PHONE": "Phone",
+                    "HOURS": "Opening Hours", "FACEBOOK": "Facebook", "INSTAGRAM": "Instagram",
+                    "STORY": "Brand Story / Marketing Pitch",
+                    "MENU_HIGHLIGHTS": "Menu Highlights", "TERRACE": "Terrace",
+                    "TREATMENT_DESCRIPTION": "Treatment Description",
+                    "TREATMENT_BENEFITS": "Treatment Benefits",
+                    "PRICING": "Pricing", "CONTRAINDICATIONS": "Contraindications",
+                }
+                lines = [f"SOURCE: VENUE WEBSITE (structured extraction)\nURL: {r_venue_url}"]
+                for key, label in field_labels.items():
+                    val = venue_details.get(key, "")
+                    if val and val.upper() != "NOT FOUND":
+                        lines.append(f"{label}: {val}")
+                venue_details_block = "\n".join(lines) + "\n-------------------\n"
+
+            # Google Places: rating, review snippets, neighborhood
+            # Pass address from crawl to improve matching accuracy
+            r_status.write("⭐ Fetching Google rating...")
+            extracted_address = venue_details.get("ADDRESS", "")
+            google_data = get_google_rating(resolved_name, resolved_city, extracted_address)
+            if google_data and google_data.get("rating"):
+                maps_url = f"https://www.google.com/maps/search/{resolved_name.replace(' ', '+')}+{resolved_city.replace(' ', '+')}"
+                google_block = (
+                    f"SOURCE: GOOGLE (Places API — verified)\nURL: {maps_url}\n"
+                    f"RATING: {google_data['rating']} stars ({google_data.get('count', 'N/A')} Google reviews)\n"
                 )
-                research_data = venue_details_block + google_block + tavily_data
+                if google_data.get("neighborhood"):
+                    google_block += f"NEIGHBORHOOD (from Google): {google_data['neighborhood']}\n"
+                if google_data.get("snippets"):
+                    google_block += "REVIEW SNIPPETS:\n" + "\n".join(f"- {s}" for s in google_data["snippets"])
+                google_block += "\n-------------------\n"
+            else:
+                google_block = "SOURCE: GOOGLE (Places API)\nNOTE: No listing found for this venue on Google Places.\n-------------------\n"
+                r_status.write("⚠️ Google Places: no match found. The venue may not have a Google listing, or the name may differ on Google Maps.")
 
-                r_status.write("🤖 Building marketing brief...")
-                brief = run_researcher_gemini(
-                    resolved_name, resolved_city, r_country, r_category,
-                    r_treatments, r_special, research_data, gen_rules_r
-                )
+            tavily_data = perform_researcher_research(
+                resolved_name, r_category, resolved_city, r_country, r_treatments, r_venue_url
+            )
+            research_data = venue_details_block + google_block + tavily_data
 
-                st.session_state.research_result = brief
-                st.session_state.research_raw_data = research_data
-                st.session_state.research_archive_name = r_deal_name
-                st.session_state.research_category = r_category
-                st.session_state.research_venue_name = resolved_name
-                st.session_state.research_city = resolved_city
-                st.session_state.research_country = r_country
+            r_status.write("🤖 Building marketing brief...")
+            brief = run_researcher_gemini(
+                resolved_name, resolved_city, r_country, r_category,
+                r_treatments, r_special, research_data, gen_rules_r
+            )
 
-                r_status.update(label="✅ Research Complete", state="complete", expanded=False)
+            st.session_state.research_result = brief
+            st.session_state.research_raw_data = research_data
+            st.session_state.research_archive_name = r_deal_name
+            st.session_state.research_category = r_category
+            st.session_state.research_venue_name = resolved_name
+            st.session_state.research_city = resolved_city
+            st.session_state.research_country = r_country
 
-            st.session_state.researcher_running = False
+            r_status.update(label="✅ Research Complete", state="complete", expanded=False)
+
+        st.session_state.researcher_running = False
 
     # --------------------------------------------------------------------------
     # DISPLAY BRIEF & ACTIONS
