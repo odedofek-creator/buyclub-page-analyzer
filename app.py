@@ -432,10 +432,16 @@ with tab1:
 
     def get_google_rating(venue_name, city, address=""):
         """Fetch rating, review count, review snippets, and neighborhood via Google Places API."""
-        places_key = st.secrets.get("Google_Places_API_Key", "")
+        places_key = (
+            st.secrets.get("Google_Places_API_Key") or
+            st.secrets.get("GOOGLE_PLACES_API_KEY") or
+            st.secrets.get("google_places_api_key") or
+            st.secrets.get("GOOGLE_PLACES_KEY") or
+            ""
+        )
         if not places_key:
             if DEBUG_MODE:
-                st.warning("Google Places: no key found in secrets (Google_Places_API_Key)")
+                st.warning(f"Google Places: key not found. Keys in secrets: {list(st.secrets.keys())}")
             return None
         try:
             search_url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
