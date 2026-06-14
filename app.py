@@ -393,12 +393,40 @@ with tab1:
     # --------------------------------------------------------------------------
 
     def crawl_venue_url(url):
-        """Crawl venue website via Tavily and return raw content."""
+        """Crawl venue homepage + common subpages (contact, about, hours) via Tavily."""
         try:
-            response = tavily.extract(urls=[url])
-            if response and response.get('results'):
-                return response['results'][0].get('raw_content', '')
-            return ""
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            base = f"{parsed.scheme}://{parsed.netloc}"
+
+            # Crawl homepage first
+            homepage_response = tavily.extract(urls=[url])
+            homepage_content = ""
+            if homepage_response and homepage_response.get('results'):
+                homepage_content = homepage_response['results'][0].get('raw_content', '')
+
+            # Try common subpages where contact info, hours, and social links live
+            subpage_candidates = [
+                f"{base}/contact",
+                f"{base}/a-propos",
+                f"{base}/about",
+                f"{base}/horaires",
+                f"{base}/nous-contacter",
+                f"{base}/contact-us",
+            ]
+            subpage_content = ""
+            try:
+                sub_response = tavily.extract(urls=subpage_candidates)
+                if sub_response and sub_response.get('results'):
+                    for result in sub_response['results']:
+                        content = result.get('raw_content', '')
+                        page_url = result.get('url', '')
+                        if content and len(content) > 100:
+                            subpage_content += f"\n\n=== SUBPAGE: {page_url} ===\n{content[:3000]}"
+            except Exception:
+                pass
+
+            return homepage_content + subpage_content
         except Exception:
             return ""
 
@@ -538,17 +566,19 @@ WEBSITE CONTENT:
             from urllib.parse import urlparse
             queries = []
 
-            # Always: search the venue's own site for subpages we can't get from homepage alone
+            # Always: search for venue's social profiles and treatment-specific subpages
             if venue_url:
                 try:
                     venue_domain = urlparse(venue_url).netloc
-                    queries.append(f'site:{venue_domain} contact hours phone address')
-                    queries.append(f'site:{venue_domain} instagram facebook social')
                     if treatment_terms:
                         for term in [t.strip() for t in treatment_terms.split(',')]:
                             queries.append(f'site:{venue_domain} "{term}"')
                 except Exception:
                     pass
+
+            # Find Instagram and Facebook profiles for this venue (even if not linked on website)
+            queries.append(f'site:instagram.com "{venue_name}"')
+            queries.append(f'site:facebook.com "{venue_name}"')
 
             if "Restaurant" in category:
                 if country == "France":
@@ -652,6 +682,10 @@ WEBSITE CONTENT:
                     source_label = "TREATMENT PLATFORM (RealSelf)"
                 elif "healthline" in domain:
                     source_label = "HEALTH EDITORIAL (Healthline)"
+                elif "instagram.com" in domain:
+                    source_label = "INSTAGRAM PROFILE"
+                elif "facebook.com" in domain:
+                    source_label = "FACEBOOK PROFILE"
 
                 context_data.append(f"SOURCE: {source_label}\nURL: {url}\nTITLE: {title}\nSNIPPET: {content}\n-------------------")
 
@@ -669,7 +703,7 @@ OUTPUT STRUCTURE (use these exact section headers):
 ## Venue Details
 Include (from the VENUE WEBSITE structured extraction in the research data):
 Neighborhood | Address | Phone | Opening Hours | Facebook | Instagram | Date Opened | Terrace
-Format social links as clickable markdown: [Facebook](url) and [Instagram](url).
+For Facebook and Instagram: check both the VENUE WEBSITE extraction AND any INSTAGRAM PROFILE or FACEBOOK PROFILE sources in the research data. Use whichever URL is found. Format as clickable markdown: [Facebook](url) and [Instagram](url).
 List ALL fields. For each field: show the value if found, or write "Not found." if not. Do not move these to the bottom "Not Found" section — handle them here inline.
 
 ## About the Restaurant
@@ -697,7 +731,7 @@ OUTPUT STRUCTURE (use these exact section headers):
 ## Venue Details
 Include (from the VENUE WEBSITE structured extraction in the research data):
 Neighborhood | Address | Phone | Opening Hours | Facebook | Instagram | Date Opened
-Format social links as clickable markdown: [Facebook](url) and [Instagram](url).
+For Facebook and Instagram: check both the VENUE WEBSITE extraction AND any INSTAGRAM PROFILE or FACEBOOK PROFILE sources in the research data. Use whichever URL is found. Format as clickable markdown: [Facebook](url) and [Instagram](url).
 List ALL fields. For each field: show the value if found, or write "Not found." if not. Do not move these to the bottom "Not Found" section — handle them here inline.
 
 ## About the Venue
@@ -725,7 +759,7 @@ OUTPUT STRUCTURE (use these exact section headers):
 ## Venue Details
 Include (from the VENUE WEBSITE structured extraction in the research data):
 Neighborhood | Address | Phone | Opening Hours | Facebook | Instagram | Date Opened
-Format social links as clickable markdown: [Facebook](url) and [Instagram](url).
+For Facebook and Instagram: check both the VENUE WEBSITE extraction AND any INSTAGRAM PROFILE or FACEBOOK PROFILE sources in the research data. Use whichever URL is found. Format as clickable markdown: [Facebook](url) and [Instagram](url).
 List ALL fields. For each field: show the value if found, or write "Not found." if not. Do not move these to the bottom "Not Found" section — handle them here inline.
 
 ## About the Venue
@@ -760,7 +794,7 @@ OUTPUT STRUCTURE (use these exact section headers):
 ## Venue Details
 Include (from the VENUE WEBSITE structured extraction in the research data):
 Neighborhood | Address | Phone | Opening Hours | Facebook | Instagram | Date Opened
-Format social links as clickable markdown: [Facebook](url) and [Instagram](url).
+For Facebook and Instagram: check both the VENUE WEBSITE extraction AND any INSTAGRAM PROFILE or FACEBOOK PROFILE sources in the research data. Use whichever URL is found. Format as clickable markdown: [Facebook](url) and [Instagram](url).
 List ALL fields. For each field: show the value if found, or write "Not found." if not.
 
 ## Overview
