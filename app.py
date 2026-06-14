@@ -192,7 +192,7 @@ def get_rules(sheet_name, category):
             cat_rules_text = "No specific rules found for this category."
 
         ws_feed = sheet_obj.worksheet("Feedback_Log")
-        feed_rules = "\n".join([r[0] for r in ws_feed.get_all_values() if r])
+        feed_rules = "\n".join([r[0] for r in ws_feed.get_all_values()[1:] if r and r[0].strip()])
 
         if DEBUG_MODE:
             st.info(f"✅ Loaded {len(gen_rules)} chars of general rules, {len(cat_rules_text)} chars of category rules")
