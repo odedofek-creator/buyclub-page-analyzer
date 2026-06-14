@@ -356,159 +356,181 @@ def save_feedback_rule(sheet_obj, rule_text):
 # UI LAYOUT
 # ==============================================================================
 
-# Row 1: The Basics
-col_a1, col_a2, col_a3 = st.columns([1.5, 1.5, 1])
-with col_a1:
-    archive_name = st.text_input("Deal Name (For Archive)", placeholder="e.g. Amore Amore Feb 2026")
-with col_a2:
-    merchant_name = st.text_input("Merchant / Venue Name (For Search)", placeholder="e.g. Amore Amore")
-with col_a3:
-    category_options = ["General"]
-    if sh:
-        try:
-            cat_headers = sh.worksheet("Category_Rules").row_values(1)
-            if cat_headers:
-                category_options = cat_headers
-        except:
-            pass
-    category = st.selectbox("Category", category_options)
-
-# Row 2: Location & URL
-col_b1, col_b2 = st.columns([1, 2])
-with col_b1:
-    location = st.text_input("City / Location", value="Geneva")
-with col_b2:
-    page_url = st.text_input("Current Page URL (Required)", placeholder="https://buyclub.ch/...")
-
-# Row 3: Previous Deal & Documents
-col_c1, col_c2 = st.columns(2)
-with col_c1:
-    prev_url = st.text_input("Previous Deal URL (Optional)", placeholder="https://buyclub.ch/...")
-    
-    contract_file = st.file_uploader("Upload Contract File", type=['pdf', 'txt', 'png', 'jpg', 'jpeg'])
-    contract_pasted = st.text_area("Or Paste Contract Text (Overrides File if Conflicts Exist)", height=68, placeholder="Paste contract text here...")
-    
-with col_c2:
-    if category and "Spa" in category:
-        treatment_term = st.text_input("Treatment(s) - For Magazine Search", placeholder="e.g. Microneedling, Botox")
-    else:
-        treatment_term = ""
-    specific_instructions = st.text_area("Specific Instructions (Logic)", height=155)
-
-analyze_btn = st.button("Analyze Page", type="primary", use_container_width=True)
+tab1, tab2, tab3 = st.tabs(["🛡️ Page Analyzer", "🔍 Marketing Researcher", "📋 Archive Viewer"])
 
 # ==============================================================================
-# MAIN LOGIC
+# TAB 1 — PAGE ANALYZER
 # ==============================================================================
 
-if analyze_btn:
-    if not archive_name or not merchant_name or not page_url:
-        st.error("Archive Name, Merchant Name, and Page URL are mandatory.")
-    else:
-        time_since_last = time.time() - st.session_state.last_analysis_time
-        if time_since_last < 10:
-            st.warning(f"⏳ Please wait {int(10 - time_since_last)} seconds before analyzing again.")
+with tab1:
+
+    # Row 1: The Basics
+    col_a1, col_a2, col_a3 = st.columns([1.5, 1.5, 1])
+    with col_a1:
+        archive_name = st.text_input("Deal Name (For Archive)", placeholder="e.g. Amore Amore Feb 2026")
+    with col_a2:
+        merchant_name = st.text_input("Merchant / Venue Name (For Search)", placeholder="e.g. Amore Amore")
+    with col_a3:
+        category_options = ["General"]
+        if sh:
+            try:
+                cat_headers = sh.worksheet("Category_Rules").row_values(1)
+                if cat_headers:
+                    category_options = cat_headers
+            except:
+                pass
+        category = st.selectbox("Category", category_options)
+
+    # Row 2: Location & URL
+    col_b1, col_b2 = st.columns([1, 2])
+    with col_b1:
+        location = st.text_input("City / Location", value="Geneva")
+    with col_b2:
+        page_url = st.text_input("Current Page URL (Required)", placeholder="https://buyclub.ch/...")
+
+    # Row 3: Previous Deal & Documents
+    col_c1, col_c2 = st.columns(2)
+    with col_c1:
+        prev_url = st.text_input("Previous Deal URL (Optional)", placeholder="https://buyclub.ch/...")
+
+        contract_file = st.file_uploader("Upload Contract File", type=['pdf', 'txt', 'png', 'jpg', 'jpeg'])
+        contract_pasted = st.text_area("Or Paste Contract Text (Overrides File if Conflicts Exist)", height=68, placeholder="Paste contract text here...")
+
+    with col_c2:
+        if category and "Spa" in category:
+            treatment_term = st.text_input("Treatment(s) - For Magazine Search", placeholder="e.g. Microneedling, Botox")
         else:
-            st.session_state.last_analysis_time = time.time()
-            
-            st.session_state.analysis_result = None
-            st.session_state.current_archive_name = ""
-            st.session_state.current_category = ""
-            
-            with st.status("Running Compliance Analysis...", expanded=True) as status:
-                status.write("🧠 Accessing Hive Mind...")
-                gen_rules, cat_rules, feed_log = get_rules("BuyClub_Page_Analyzer_Brain", category)
-                
-                status.write("🕷️ Scraping Content...")
-                scraped_text = scrape_url(page_url)
-                
-                if scraped_text.startswith("Error scraping"):
-                    st.error(f"Failed to scrape page: {scraped_text}")
-                    status.update(label="❌ Scraping Failed", state="error", expanded=False)
-                    st.stop()
-                
-                prev_text = scrape_url(prev_url) if prev_url else "N/A"
-                
-                status.write("📄 Processing Contract Data...")
-                
-                # SMART CONTRACT EXTRACTION & COMBINATION
-                contract_text_from_file = extract_text_from_file(contract_file)
-                if contract_text_from_file.startswith("Error"):
-                    contract_text_from_file = ""
-                    
-                contract_text = ""
-                if contract_pasted.strip() and contract_text_from_file:
-                    contract_text = f"[PASTED TEXT (ABSOLUTE TRUTH - OVERRIDES UPLOADED FILE)]:\n{contract_pasted.strip()}\n\n[UPLOADED FILE]:\n{contract_text_from_file}"
-                elif contract_pasted.strip():
-                    contract_text = f"[PASTED TEXT]:\n{contract_pasted.strip()}"
-                elif contract_text_from_file:
-                    contract_text = f"[UPLOADED FILE]:\n{contract_text_from_file}"
-                else:
-                    contract_text = "N/A"
-                
-                # DYNAMIC SEARCH STATUS MESSAGE
-                if category and "Spa" in category and treatment_term:
-                    status.write(f"🕵️‍♂️ Researching Venue '{merchant_name}' & Magazine Treatments '{treatment_term}'...")
-                else:
-                    status.write(f"🕵️‍♂️ Researching '{merchant_name}' in {location}...")
-                    
-                search_results = perform_research(merchant_name, category, location, treatment_term)
-                
-                status.write("🤖 Analyzing...")
-                with st.spinner("Waiting for Gemini response..."):
-                    report = analyze_with_gemini(
-                        scraped_text, prev_text, contract_text, search_results, 
-                        gen_rules, cat_rules, feed_log, specific_instructions
-                    )
-                
-                st.session_state.analysis_result = report
-                st.session_state.current_archive_name = archive_name
-                st.session_state.current_category = category
-                
-                status.update(label="✅ Analysis Complete", state="complete", expanded=False)
+            treatment_term = ""
+        specific_instructions = st.text_area("Specific Instructions (Logic)", height=155)
 
-# ==============================================================================
-# DISPLAY REPORT & ACTIONS
-# ==============================================================================
+    analyze_btn = st.button("Analyze Page", type="primary", use_container_width=True)
 
-if st.session_state.analysis_result:
-    
-    col_act1, col_act2 = st.columns(2)
-    
-    with col_act1:
-        if st.button("💾 Save to Archive", use_container_width=True):
-            if sh:
-                with st.spinner("Saving to Google Sheets..."):
-                    archive_report(sh, st.session_state.current_archive_name, st.session_state.current_category, st.session_state.analysis_result)
+    # --------------------------------------------------------------------------
+    # MAIN LOGIC
+    # --------------------------------------------------------------------------
+
+    if analyze_btn:
+        if not archive_name or not merchant_name or not page_url:
+            st.error("Archive Name, Merchant Name, and Page URL are mandatory.")
+        else:
+            time_since_last = time.time() - st.session_state.last_analysis_time
+            if time_since_last < 10:
+                st.warning(f"⏳ Please wait {int(10 - time_since_last)} seconds before analyzing again.")
             else:
-                st.error("Cannot save: Google Sheets connection unavailable")
-    
-    with col_act2:
-        if st.button("🗑️ Trash / Clear", use_container_width=True):
-            st.session_state.analysis_result = None
-            st.session_state.current_archive_name = ""
-            st.session_state.current_category = ""
+                st.session_state.last_analysis_time = time.time()
+
+                st.session_state.analysis_result = None
+                st.session_state.current_archive_name = ""
+                st.session_state.current_category = ""
+
+                with st.status("Running Compliance Analysis...", expanded=True) as status:
+                    status.write("🧠 Accessing Hive Mind...")
+                    gen_rules, cat_rules, feed_log = get_rules("BuyClub_Page_Analyzer_Brain", category)
+
+                    status.write("🕷️ Scraping Content...")
+                    scraped_text = scrape_url(page_url)
+
+                    if scraped_text.startswith("Error scraping"):
+                        st.error(f"Failed to scrape page: {scraped_text}")
+                        status.update(label="❌ Scraping Failed", state="error", expanded=False)
+                        st.stop()
+
+                    prev_text = scrape_url(prev_url) if prev_url else "N/A"
+
+                    status.write("📄 Processing Contract Data...")
+
+                    # SMART CONTRACT EXTRACTION & COMBINATION
+                    contract_text_from_file = extract_text_from_file(contract_file)
+                    if contract_text_from_file.startswith("Error"):
+                        contract_text_from_file = ""
+
+                    contract_text = ""
+                    if contract_pasted.strip() and contract_text_from_file:
+                        contract_text = f"[PASTED TEXT (ABSOLUTE TRUTH - OVERRIDES UPLOADED FILE)]:\n{contract_pasted.strip()}\n\n[UPLOADED FILE]:\n{contract_text_from_file}"
+                    elif contract_pasted.strip():
+                        contract_text = f"[PASTED TEXT]:\n{contract_pasted.strip()}"
+                    elif contract_text_from_file:
+                        contract_text = f"[UPLOADED FILE]:\n{contract_text_from_file}"
+                    else:
+                        contract_text = "N/A"
+
+                    # DYNAMIC SEARCH STATUS MESSAGE
+                    if category and "Spa" in category and treatment_term:
+                        status.write(f"🕵️‍♂️ Researching Venue '{merchant_name}' & Magazine Treatments '{treatment_term}'...")
+                    else:
+                        status.write(f"🕵️‍♂️ Researching '{merchant_name}' in {location}...")
+
+                    search_results = perform_research(merchant_name, category, location, treatment_term)
+
+                    status.write("🤖 Analyzing...")
+                    with st.spinner("Waiting for Gemini response..."):
+                        report = analyze_with_gemini(
+                            scraped_text, prev_text, contract_text, search_results,
+                            gen_rules, cat_rules, feed_log, specific_instructions
+                        )
+
+                    st.session_state.analysis_result = report
+                    st.session_state.current_archive_name = archive_name
+                    st.session_state.current_category = category
+
+                    status.update(label="✅ Analysis Complete", state="complete", expanded=False)
+
+    # --------------------------------------------------------------------------
+    # DISPLAY REPORT & ACTIONS
+    # --------------------------------------------------------------------------
 
     if st.session_state.analysis_result:
-        st.markdown("---")
-        st.markdown("### 📋 Compliance Report")
-        if "FATAL ERROR" in st.session_state.analysis_result:
-            st.error(st.session_state.analysis_result)
-        else:
-            st.markdown(st.session_state.analysis_result)
+
+        col_act1, col_act2 = st.columns(2)
+
+        with col_act1:
+            if st.button("💾 Save to Archive", use_container_width=True):
+                if sh:
+                    with st.spinner("Saving to Google Sheets..."):
+                        archive_report(sh, st.session_state.current_archive_name, st.session_state.current_category, st.session_state.analysis_result)
+                else:
+                    st.error("Cannot save: Google Sheets connection unavailable")
+
+        with col_act2:
+            if st.button("🗑️ Trash / Clear", use_container_width=True):
+                st.session_state.analysis_result = None
+                st.session_state.current_archive_name = ""
+                st.session_state.current_category = ""
+
+        if st.session_state.analysis_result:
+            st.markdown("---")
+            st.markdown("### 📋 Compliance Report")
+            if "FATAL ERROR" in st.session_state.analysis_result:
+                st.error(st.session_state.analysis_result)
+            else:
+                st.markdown(st.session_state.analysis_result)
+
+    # --------------------------------------------------------------------------
+    # FEEDBACK LOOP
+    # --------------------------------------------------------------------------
+
+    st.markdown("---")
+    with st.expander("🧠 Teach the App (Add to Feedback Log)"):
+        new_rule = st.text_input("Describe the error the AI missed or a new rule:")
+        if st.button("Save Rule"):
+            if new_rule and sh:
+                save_feedback_rule(sh, new_rule)
+            elif not sh:
+                st.error("Database not connected.")
 
 # ==============================================================================
-# FEEDBACK LOOP
+# TAB 2 — MARKETING RESEARCHER (coming next)
 # ==============================================================================
 
-st.markdown("---")
-with st.expander("🧠 Teach the App (Add to Feedback Log)"):
-    new_rule = st.text_input("Describe the error the AI missed or a new rule:")
-    if st.button("Save Rule"):
-        if new_rule and sh:
-            save_feedback_rule(sh, new_rule)
-        elif not sh:
-            st.error("Database not connected.")
+with tab2:
+    st.info("🔍 Marketing Researcher — coming soon.")
+
+# ==============================================================================
+# TAB 3 — ARCHIVE VIEWER (coming next)
+# ==============================================================================
+
+with tab3:
+    st.info("📋 Archive Viewer — coming soon.")
 
 if DEBUG_MODE:
     st.markdown("---")
