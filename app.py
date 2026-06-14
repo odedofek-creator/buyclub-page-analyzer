@@ -356,13 +356,401 @@ def save_feedback_rule(sheet_obj, rule_text):
 # UI LAYOUT
 # ==============================================================================
 
-tab1, tab2, tab3 = st.tabs(["🛡️ Page Analyzer", "🔍 Marketing Researcher", "📋 Archive Viewer"])
+tab1, tab2, tab3 = st.tabs(["🔍 Marketing Researcher", "🛡️ Page Analyzer", "📋 Archive Viewer"])
 
 # ==============================================================================
-# TAB 1 — PAGE ANALYZER
+# TAB 1 — MARKETING RESEARCHER
 # ==============================================================================
 
 with tab1:
+
+    # --------------------------------------------------------------------------
+    # SESSION STATE
+    # --------------------------------------------------------------------------
+    if 'research_result' not in st.session_state:
+        st.session_state.research_result = None
+    if 'research_raw_data' not in st.session_state:
+        st.session_state.research_raw_data = None
+    if 'research_archive_name' not in st.session_state:
+        st.session_state.research_archive_name = ""
+    if 'research_category' not in st.session_state:
+        st.session_state.research_category = ""
+    if 'research_venue_name' not in st.session_state:
+        st.session_state.research_venue_name = ""
+    if 'research_city' not in st.session_state:
+        st.session_state.research_city = ""
+    if 'research_country' not in st.session_state:
+        st.session_state.research_country = ""
+
+    # --------------------------------------------------------------------------
+    # HELPER FUNCTIONS
+    # --------------------------------------------------------------------------
+
+    def crawl_venue_url(url):
+        """Crawl venue website via Tavily and return raw content."""
+        try:
+            response = tavily.extract(urls=[url])
+            if response and response.get('results'):
+                return response['results'][0].get('raw_content', '')
+            return ""
+        except Exception:
+            return ""
+
+    def extract_name_and_city_from_crawl(crawl_content):
+        """Use Gemini to extract venue name and city from crawled website content."""
+        try:
+            model = genai.GenerativeModel(model_name='gemini-3.5-flash')
+            prompt = f"""From the following website content, extract:
+1. The venue/business name
+2. The city it is located in
+
+Reply in this exact format (two lines only):
+NAME: <venue name>
+CITY: <city name>
+
+If you cannot determine one of them, write NOT FOUND for that field.
+
+WEBSITE CONTENT:
+{crawl_content[:3000]}"""
+            response = model.generate_content(prompt)
+            text = response.text.strip()
+            name, city = "NOT FOUND", "NOT FOUND"
+            for line in text.splitlines():
+                if line.startswith("NAME:"):
+                    name = line.replace("NAME:", "").strip()
+                elif line.startswith("CITY:"):
+                    city = line.replace("CITY:", "").strip()
+            return name, city
+        except Exception:
+            return "NOT FOUND", "NOT FOUND"
+
+    def perform_researcher_research(venue_name, category, city, country, treatment_terms="", venue_url=""):
+        """Run Tavily searches for the Marketing Researcher tab."""
+        try:
+            banned_domains = ["wanderlog.com", "restaurantguru.com", "sluurpy.com", "top10.com", "trip.com"]
+            location_str = f"{city}, {country}" if country != "Switzerland" else city
+
+            queries = [
+                f"{venue_name} {city} google reviews",
+                f"{venue_name} {city}",
+            ]
+
+            # Venue website crawl
+            if venue_url:
+                queries.append(venue_url)
+
+            if "Restaurant" in category:
+                if country == "France":
+                    queries.append(f"site:guide.michelin.com/fr {venue_name}")
+                    queries.append(f"site:gaultmillau.fr {venue_name}")
+                    queries.append(f"site:lefigaro.fr OR site:lemonde.fr OR site:20minutes.fr {venue_name}")
+                else:
+                    queries.append(f"site:guide.michelin.com/ch/fr {venue_name}")
+                    queries.append(f"site:gaultmillau.ch {venue_name}")
+                    queries.append(f"site:lematin.ch OR site:20min.ch OR site:tdg.ch OR site:letemps.ch {venue_name}")
+                queries.append(f"site:tripadvisor.com {venue_name} {city} \"Certificate of Excellence\"")
+
+            elif "Simple Beauty Treatment" in category:
+                queries.append(f"{venue_name} {city} press review")
+                if treatment_terms:
+                    terms = [t.strip() for t in treatment_terms.split(',')]
+                    for term in terms:
+                        queries.append(f"{term} treatment benefits")
+
+            elif "High-Tech Aesthetic Treatment" in category:
+                queries.append(f"{venue_name} {city} press review")
+                if treatment_terms:
+                    terms = [t.strip() for t in treatment_terms.split(',')]
+                    search_scope = "site:elle.com OR site:cosmopolitan.com OR site:vogue.com OR site:marieclaire.com"
+                    joined_terms = " OR ".join(f'"{t}"' for t in terms)
+                    queries.append(f"{search_scope} ({joined_terms})")
+                    for term in terms:
+                        queries.append(f"{term} clinical study scientific evidence FDA")
+
+            all_results = []
+            for q in queries:
+                try:
+                    response = tavily.search(query=q, search_depth="advanced", max_results=5)
+                    all_results.extend(response.get('results', []))
+                except Exception:
+                    continue
+
+            context_data = []
+            seen_urls = set()
+            for result in all_results:
+                url = result['url']
+                title = result['title']
+                content = result['content']
+                domain = url.split('/')[2] if '//' in url else url.split('/')[0]
+                if url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                if any(bad in domain for bad in banned_domains):
+                    continue
+
+                source_label = "General Web"
+                if "google" in domain:
+                    source_label = "GOOGLE REVIEWS"
+                elif "michelin" in domain:
+                    source_label = "MICHELIN GUIDE"
+                elif "gaultmillau" in domain:
+                    source_label = "GAULT MILLAU"
+                elif "tripadvisor" in domain:
+                    source_label = "TRIPADVISOR"
+                elif any(d in domain for d in ["lematin", "20min", "tdg.ch", "letemps", "lefigaro", "lemonde", "20minutes.fr"]):
+                    source_label = "PRESS"
+                elif any(d in domain for d in ["elle.com", "vogue.com", "cosmopolitan.com", "marieclaire.com"]):
+                    source_label = "BEAUTY PRESS"
+
+                context_data.append(f"SOURCE: {source_label}\nURL: {url}\nTITLE: {title}\nSNIPPET: {content}\n-------------------")
+
+            return "\n".join(context_data)
+        except Exception as e:
+            return f"Search failed: {e}"
+
+    def run_researcher_gemini(venue_name, city, country, category, treatment_terms, special_instructions, research_data, gen_rules):
+        """Run Gemini in Marketing Researcher persona and return structured brief."""
+
+        if "Restaurant" in category:
+            output_structure = """
+OUTPUT STRUCTURE (use these exact section headers):
+## Overview
+## Ratings & Awards
+## Press Mentions
+## Key Marketing Points
+## Not Found
+"""
+        elif "Simple Beauty Treatment" in category:
+            output_structure = """
+OUTPUT STRUCTURE (use these exact section headers):
+## Treatment Overview
+## About the Venue
+## Venue Reviews & Ratings
+## Press Mentions
+## Key Marketing Points
+## Not Found
+"""
+        elif "High-Tech Aesthetic Treatment" in category:
+            output_structure = """
+OUTPUT STRUCTURE (use these exact section headers):
+## Treatment Overview
+## Clinical & Scientific Backing
+## Beauty Press Coverage
+## About the Venue
+## Venue Reviews & Ratings
+## Key Marketing Points
+## Not Found
+"""
+        else:
+            output_structure = """
+OUTPUT STRUCTURE (use these exact section headers):
+## Overview
+## Reviews & Ratings
+## Key Marketing Points
+## Not Found
+"""
+
+        system_prompt = f"""You are a Marketing Researcher for BuyClub, a premium members-only deals platform in Geneva and Lausanne.
+Your job is to produce a sourced marketing brief about a venue or treatment to help a copywriter write a compelling deal page.
+
+RULES:
+- Every factual claim about the venue must be backed by a real URL from the research data. No invention.
+- Treatment descriptions and general benefit information (not specific to the venue) may draw on your own knowledge — label these clearly as "General Information".
+- Ignore low-authority sources: personal blogs, forum posts, aggregators.
+- If a section has no findings, write "Not found." under that header — do not skip it.
+- Be specific and useful. The copywriter needs real claims they can use.
+- Output in English only.
+
+{output_structure}"""
+
+        user_prompt = f"""
+VENUE: {venue_name}
+CITY: {city}
+COUNTRY: {country}
+CATEGORY: {category}
+{"TREATMENT(S): " + treatment_terms if treatment_terms else ""}
+{"SPECIAL INSTRUCTIONS: " + special_instructions if special_instructions else ""}
+
+GENERAL RULES FROM SHEET:
+{gen_rules}
+
+RESEARCH DATA:
+{research_data}
+"""
+
+        try:
+            model = genai.GenerativeModel(model_name='gemini-3.5-flash', system_instruction=system_prompt)
+            response = model.generate_content(user_prompt)
+            return response.text
+        except Exception as e:
+            return f"FATAL ERROR: {str(e)}"
+
+    def archive_research(sheet_obj, deal_name, category, venue_name, city, country, brief_text):
+        """Save research brief to Research_Archive tab."""
+        try:
+            ws = sheet_obj.worksheet("Research_Archive")
+            ws.append_row([
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                deal_name,
+                category,
+                venue_name,
+                city,
+                country,
+                brief_text
+            ])
+            st.toast(f"✅ '{deal_name}' research saved to archive.", icon="💾")
+        except Exception as e:
+            st.error(f"Archiving failed: {e}")
+
+    # --------------------------------------------------------------------------
+    # FORM
+    # --------------------------------------------------------------------------
+
+    r_col1, r_col2 = st.columns([1.5, 1.5])
+    with r_col1:
+        r_deal_name = st.text_input("Deal Name (For Archive)", placeholder="e.g. Amore Amore June 2026", key="r_deal_name")
+    with r_col2:
+        r_venue_url = st.text_input("Venue Website URL (Optional)", placeholder="https://venue-website.com", key="r_venue_url")
+
+    r_col3, r_col4, r_col5 = st.columns([2, 1, 1])
+    with r_col3:
+        r_venue_name = st.text_input("Merchant / Venue Name", placeholder="Auto-filled from URL, or enter manually", key="r_venue_name")
+    with r_col4:
+        r_country = st.selectbox("Country", ["Switzerland", "France", "Other"], key="r_country")
+    with r_col5:
+        r_city = st.text_input("City", value="Geneva", key="r_city")
+
+    r_col6, r_col7 = st.columns([1, 2])
+    with r_col6:
+        r_category_options = ["General"]
+        if sh:
+            try:
+                r_cat_headers = sh.worksheet("Category_Rules").row_values(1)
+                if r_cat_headers:
+                    r_category_options = r_cat_headers
+            except Exception:
+                pass
+        r_category = st.selectbox("Category", r_category_options, key="r_category")
+    with r_col7:
+        if r_category and ("Simple Beauty Treatment" in r_category or "High-Tech Aesthetic Treatment" in r_category):
+            r_treatments = st.text_input("Treatment(s) — comma-separated", placeholder="e.g. Microneedling, PRP", key="r_treatments")
+        else:
+            r_treatments = ""
+
+    r_special = st.text_area("Special Instructions (Optional)", height=80, key="r_special")
+
+    research_btn = st.button("Run Research", type="primary", use_container_width=True)
+
+    # --------------------------------------------------------------------------
+    # MAIN LOGIC
+    # --------------------------------------------------------------------------
+
+    if research_btn:
+        if not r_deal_name:
+            st.error("Deal Name is required.")
+        elif not r_venue_name and not r_venue_url:
+            st.error("Provide either a Venue URL or a Venue Name.")
+        else:
+            st.session_state.research_result = None
+
+            with st.status("Running Research...", expanded=True) as r_status:
+
+                resolved_name = r_venue_name.strip()
+                resolved_city = r_city.strip()
+
+                # URL-first: crawl and extract name/city if URL provided
+                if r_venue_url:
+                    r_status.write("🌐 Crawling venue website...")
+                    crawl_content = crawl_venue_url(r_venue_url)
+                    if crawl_content:
+                        extracted_name, extracted_city = extract_name_and_city_from_crawl(crawl_content)
+                        if not resolved_name and extracted_name != "NOT FOUND":
+                            resolved_name = extracted_name
+                        if extracted_city != "NOT FOUND" and not r_venue_name:
+                            resolved_city = extracted_city
+                    else:
+                        r_status.write("⚠️ Could not crawl venue URL — using manually entered details.")
+
+                if not resolved_name:
+                    st.error("Could not determine venue name from URL. Please enter it manually.")
+                    r_status.update(label="❌ Missing venue name", state="error", expanded=False)
+                    st.stop()
+
+                r_status.write(f"🕵️ Researching '{resolved_name}' in {resolved_city}...")
+                gen_rules_r, _, _ = get_rules("BuyClub_Page_Analyzer_Brain", r_category)
+                research_data = perform_researcher_research(
+                    resolved_name, r_category, resolved_city, r_country, r_treatments, r_venue_url
+                )
+
+                r_status.write("🤖 Building marketing brief...")
+                brief = run_researcher_gemini(
+                    resolved_name, resolved_city, r_country, r_category,
+                    r_treatments, r_special, research_data, gen_rules_r
+                )
+
+                st.session_state.research_result = brief
+                st.session_state.research_raw_data = research_data
+                st.session_state.research_archive_name = r_deal_name
+                st.session_state.research_category = r_category
+                st.session_state.research_venue_name = resolved_name
+                st.session_state.research_city = resolved_city
+                st.session_state.research_country = r_country
+
+                r_status.update(label="✅ Research Complete", state="complete", expanded=False)
+
+    # --------------------------------------------------------------------------
+    # DISPLAY BRIEF & ACTIONS
+    # --------------------------------------------------------------------------
+
+    if st.session_state.research_result:
+
+        r_act1, r_act2 = st.columns(2)
+        with r_act1:
+            if st.button("💾 Save to Research Archive", use_container_width=True):
+                if sh:
+                    with st.spinner("Saving..."):
+                        archive_research(
+                            sh,
+                            st.session_state.research_archive_name,
+                            st.session_state.research_category,
+                            st.session_state.research_venue_name,
+                            st.session_state.research_city,
+                            st.session_state.research_country,
+                            st.session_state.research_result
+                        )
+                else:
+                    st.error("Cannot save: Google Sheets connection unavailable.")
+        with r_act2:
+            if st.button("🗑️ Clear", use_container_width=True, key="r_clear"):
+                st.session_state.research_result = None
+                st.session_state.research_raw_data = None
+
+        if st.session_state.research_result:
+            st.markdown("---")
+            st.markdown("### 📋 Marketing Brief")
+            if "FATAL ERROR" in st.session_state.research_result:
+                st.error(st.session_state.research_result)
+            else:
+                st.markdown(st.session_state.research_result)
+
+    # --------------------------------------------------------------------------
+    # FEEDBACK LOOP
+    # --------------------------------------------------------------------------
+
+    st.markdown("---")
+    with st.expander("🧠 Teach the App (Add to Feedback Log)"):
+        r_new_rule = st.text_input("Describe a rule or correction:", key="r_new_rule")
+        if st.button("Save Rule", key="r_save_rule"):
+            if r_new_rule and sh:
+                save_feedback_rule(sh, r_new_rule)
+            elif not sh:
+                st.error("Database not connected.")
+
+# ==============================================================================
+# TAB 2 — PAGE ANALYZER
+# ==============================================================================
+
+with tab2:
 
     # Row 1: The Basics
     col_a1, col_a2, col_a3 = st.columns([1.5, 1.5, 1])
@@ -517,13 +905,6 @@ with tab1:
                 save_feedback_rule(sh, new_rule)
             elif not sh:
                 st.error("Database not connected.")
-
-# ==============================================================================
-# TAB 2 — MARKETING RESEARCHER (coming next)
-# ==============================================================================
-
-with tab2:
-    st.info("🔍 Marketing Researcher — coming soon.")
 
 # ==============================================================================
 # TAB 3 — ARCHIVE VIEWER (coming next)
