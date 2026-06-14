@@ -664,9 +664,19 @@ RESEARCH DATA:
                     crawl_content = crawl_venue_url(r_venue_url)
                     if crawl_content:
                         extracted_name, extracted_city = extract_name_and_city_from_crawl(crawl_content)
+
+                        # Conflict detection: flag if extracted values differ from manual input
+                        if resolved_name and extracted_name != "NOT FOUND":
+                            if extracted_name.lower().strip() != resolved_name.lower().strip():
+                                st.warning(f"⚠️ **Name conflict:** URL crawl found **\"{extracted_name}\"** but you entered **\"{resolved_name}\"**. Proceeding with your manual entry — double-check that the URL is for the right venue.")
+                        if r_city.strip() and extracted_city != "NOT FOUND":
+                            if extracted_city.lower().strip() != r_city.lower().strip():
+                                st.warning(f"⚠️ **City conflict:** URL crawl found **\"{extracted_city}\"** but you entered **\"{r_city.strip()}\"**. Proceeding with your manual entry.")
+
+                        # Auto-fill only if manual fields are empty
                         if not resolved_name and extracted_name != "NOT FOUND":
                             resolved_name = extracted_name
-                        if extracted_city != "NOT FOUND" and not r_venue_name:
+                        if not r_venue_name and extracted_city != "NOT FOUND":
                             resolved_city = extracted_city
                     else:
                         r_status.write("⚠️ Could not crawl venue URL — using manually entered details.")
