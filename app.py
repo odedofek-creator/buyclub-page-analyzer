@@ -199,27 +199,30 @@ def get_rules(sheet_name, category):
         st.error(f"Error fetching rules: {e}")
         return "", "", ""
 
-def perform_research(merchant_name, category, location="Geneva", treatment_terms=""):
-    """
-    Context-Aware Research.
-    """
+def perform_research(merchant_name, category, city="Geneva", country="Switzerland", treatment_terms=""):
+    """Context-Aware Research for Page Analyzer tab."""
     try:
         banned_domains = ["wanderlog.com", "restaurantguru.com", "sluurpy.com", "top10.com", "trip.com"]
-        queries = [f"{merchant_name} {location} google reviews official website"]
-        
+        queries = [f"{merchant_name} {city} google reviews official website"]
+
         if category and "Restaurant" in category:
-            queries.append(f"site:guide.michelin.com/ch/fr {merchant_name}")
-            queries.append(f"site:gaultmillau.ch/fr {merchant_name}")
-            queries.append(f"site:lematin.ch OR site:20min.ch OR site:tdg.ch OR site:letemps.ch {merchant_name}")
-            
+            if country == "France":
+                queries.append(f'site:guide.michelin.com/fr "{merchant_name}"')
+                queries.append(f'site:gaultmillau.fr "{merchant_name}"')
+                queries.append(f'site:lefigaro.fr OR site:lemonde.fr OR site:20minutes.fr "{merchant_name}"')
+            else:
+                queries.append(f'site:guide.michelin.com/ch/fr "{merchant_name}"')
+                queries.append(f'site:gaultmillau.ch "{merchant_name}"')
+                queries.append(f'site:lematin.ch OR site:20min.ch OR site:tdg.ch OR site:letemps.ch "{merchant_name}"')
+            queries.append(f'site:tripadvisor.com "{merchant_name}" "{city}"')
+
         elif category and "Hotel" in category:
-            queries.append(f"site:booking.com {merchant_name} {location} reviews")
-            queries.append(f"site:tripadvisor.com {merchant_name} \"Certificate of Excellence\"")
+            queries.append(f"site:booking.com {merchant_name} {city} reviews")
+            queries.append(f'site:tripadvisor.com {merchant_name} "Certificate of Excellence"')
 
         elif category and "Spa" in category:
-            search_scope = f"site:elle.com OR site:cosmopolitan.com OR site:vogue.com OR site:marieclaire.com"
+            search_scope = "site:elle.com OR site:cosmopolitan.com OR site:vogue.com OR site:marieclaire.com"
             if treatment_terms:
-                # ONLY search for treatments in the magazines (ignoring merchant name for this specific query)
                 terms = [t.strip() for t in treatment_terms.split(',')]
                 joined_terms = " OR ".join(f'"{t}"' for t in terms)
                 queries.append(f"{search_scope} ({joined_terms})")
@@ -233,7 +236,7 @@ def perform_research(merchant_name, category, location="Geneva", treatment_terms
                 all_results.extend(response.get('results', []))
             except:
                 continue
-        
+
         context_data = []
         seen_urls = set()
 
@@ -242,26 +245,27 @@ def perform_research(merchant_name, category, location="Geneva", treatment_terms
             title = result['title']
             content = result['content']
             domain = url.split('/')[2] if '//' in url else url.split('/')[0]
-            
+
             if url in seen_urls: continue
             seen_urls.add(url)
-            
+
             if any(bad in domain for bad in banned_domains): continue
-            
+
             source_label = "General Web"
             if "google" in domain: source_label = "GOOGLE REVIEWS"
             elif "booking.com" in domain: source_label = "BOOKING.COM"
-            elif "michelin" in domain: source_label = "MICHELIN GUIDE (Swiss/FR)"
-            elif "gaultmillau" in domain: source_label = "GAULT MILLAU (Swiss/FR)"
+            elif "michelin" in domain: source_label = "MICHELIN GUIDE (FR)" if country == "France" else "MICHELIN GUIDE (CH)"
+            elif "gaultmillau" in domain: source_label = "GAULT MILLAU (FR)" if country == "France" else "GAULT MILLAU (CH)"
             elif "tripadvisor" in domain: source_label = "TRIPADVISOR"
-            elif "lematin" in domain or "20min" in domain or "tdg.ch" in domain: source_label = "SWISS PRESS"
+            elif any(d in domain for d in ["lematin", "20min", "tdg.ch", "letemps"]): source_label = "SWISS PRESS"
+            elif any(d in domain for d in ["lefigaro", "lemonde", "20minutes.fr"]): source_label = "FRENCH PRESS"
             elif "elle" in domain or "vogue" in domain or "cosmo" in domain: source_label = "FASHION MAGAZINE"
 
             context_data.append(f"SOURCE: {source_label}\nURL: {url}\nTITLE: {title}\nSNIPPET: {content}\n-------------------")
-        
+
         if DEBUG_MODE:
             st.info(f"✅ Found {len(context_data)} unique research results from {len(queries)} queries")
-            
+
         return "\n".join(context_data)
     except Exception as e:
         return f"Search failed: {e}"
@@ -1256,10 +1260,12 @@ with tab2:
                 pass
         category = st.selectbox("Category", category_options)
 
-    # Row 2: Location & URL
-    col_b1, col_b2 = st.columns([1, 2])
+    # Row 2: Country, City & URL
+    col_b0, col_b1, col_b2 = st.columns([1, 1, 2])
+    with col_b0:
+        a_country = st.selectbox("Country", ["Switzerland", "France", "Other"], key="a_country")
     with col_b1:
-        location = st.text_input("City / Location", value="Geneva")
+        a_city = st.text_input("City", value="Geneva", key="a_city")
     with col_b2:
         page_url = st.text_input("Current Page URL (Required)", placeholder="https://buyclub.ch/...")
 
@@ -1333,9 +1339,9 @@ with tab2:
                     if category and "Spa" in category and treatment_term:
                         status.write(f"🕵️‍♂️ Researching Venue '{merchant_name}' & Magazine Treatments '{treatment_term}'...")
                     else:
-                        status.write(f"🕵️‍♂️ Researching '{merchant_name}' in {location}...")
+                        status.write(f"🕵️‍♂️ Researching '{merchant_name}' in {a_city}, {a_country}...")
 
-                    search_results = perform_research(merchant_name, category, location, treatment_term)
+                    search_results = perform_research(merchant_name, category, a_city, a_country, treatment_term)
 
                     status.write("🤖 Analyzing...")
                     with st.spinner("Waiting for Gemini response..."):
