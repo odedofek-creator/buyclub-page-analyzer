@@ -396,6 +396,42 @@ with tab1:
         except Exception:
             return ""
 
+    def get_google_rating(venue_name, city):
+        """Fetch rating, review count, and up to 5 review snippets via Google Places API."""
+        places_key = st.secrets.get("GOOGLE_PLACES_API_KEY", st.secrets.get("GOOGLE_API_KEY", ""))
+        if not places_key:
+            return None
+        try:
+            find_url = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
+            r = requests.get(find_url, params={
+                "input": f"{venue_name} {city}",
+                "inputtype": "textquery",
+                "fields": "place_id",
+                "key": places_key
+            }, timeout=10)
+            r.raise_for_status()
+            candidates = r.json().get("candidates", [])
+            if not candidates:
+                return None
+            place_id = candidates[0]["place_id"]
+
+            details_url = "https://maps.googleapis.com/maps/api/place/details/json"
+            r2 = requests.get(details_url, params={
+                "place_id": place_id,
+                "fields": "name,rating,user_ratings_total,reviews",
+                "key": places_key
+            }, timeout=10)
+            r2.raise_for_status()
+            result = r2.json().get("result", {})
+            snippets = [rev.get("text", "") for rev in result.get("reviews", [])[:5] if rev.get("text")]
+            return {
+                "rating": result.get("rating"),
+                "count": result.get("user_ratings_total"),
+                "snippets": snippets
+            }
+        except Exception:
+            return None
+
     def extract_name_and_city_from_crawl(crawl_content):
         """Use Gemini to extract venue name and city from crawled website content."""
         try:
@@ -424,48 +460,54 @@ WEBSITE CONTENT:
         except Exception:
             return "NOT FOUND", "NOT FOUND"
 
-    def perform_researcher_research(venue_name, category, city, country, treatment_terms="", venue_url=""):
-        """Run Tavily searches for the Marketing Researcher tab."""
+    def perform_researcher_research(venue_name, category, city, country, treatment_terms=""):
+        """Run site:-specific Tavily searches for the Marketing Researcher tab."""
         try:
-            banned_domains = ["wanderlog.com", "restaurantguru.com", "sluurpy.com", "top10.com", "trip.com"]
-            location_str = f"{city}, {country}" if country != "Switzerland" else city
-
-            queries = [
-                f"{venue_name} {city} google reviews",
-                f"{venue_name} {city}",
-            ]
-
-            # Venue website crawl
-            if venue_url:
-                queries.append(venue_url)
+            queries = []
 
             if "Restaurant" in category:
                 if country == "France":
-                    queries.append(f"site:guide.michelin.com/fr {venue_name}")
-                    queries.append(f"site:gaultmillau.fr {venue_name}")
-                    queries.append(f"site:lefigaro.fr OR site:lemonde.fr OR site:20minutes.fr {venue_name}")
+                    queries += [
+                        f'site:guide.michelin.com/fr "{venue_name}"',
+                        f'site:gaultmillau.fr "{venue_name}"',
+                        f'site:lefigaro.fr OR site:lemonde.fr OR site:20minutes.fr "{venue_name}"',
+                    ]
                 else:
-                    queries.append(f"site:guide.michelin.com/ch/fr {venue_name}")
-                    queries.append(f"site:gaultmillau.ch {venue_name}")
-                    queries.append(f"site:lematin.ch OR site:20min.ch OR site:tdg.ch OR site:letemps.ch {venue_name}")
-                queries.append(f"site:tripadvisor.com {venue_name} {city} \"Certificate of Excellence\"")
-
-            elif "Simple Beauty Treatment" in category:
-                queries.append(f"{venue_name} {city} press review")
-                if treatment_terms:
-                    terms = [t.strip() for t in treatment_terms.split(',')]
-                    for term in terms:
-                        queries.append(f"{term} treatment benefits")
+                    queries += [
+                        f'site:guide.michelin.com/ch/fr "{venue_name}"',
+                        f'site:gaultmillau.ch "{venue_name}"',
+                        f'site:letemps.ch OR site:lematin.ch OR site:tdg.ch OR site:20min.ch "{venue_name}"',
+                        f'site:genevetourism.com "{venue_name}"',
+                        f'site:lausanne-tourisme.ch "{venue_name}"',
+                    ]
+                queries.append(f'site:tripadvisor.com "{venue_name}" "{city}"')
 
             elif "High-Tech Aesthetic Treatment" in category:
-                queries.append(f"{venue_name} {city} press review")
                 if treatment_terms:
                     terms = [t.strip() for t in treatment_terms.split(',')]
-                    search_scope = "site:elle.com OR site:cosmopolitan.com OR site:vogue.com OR site:marieclaire.com"
-                    joined_terms = " OR ".join(f'"{t}"' for t in terms)
-                    queries.append(f"{search_scope} ({joined_terms})")
                     for term in terms:
-                        queries.append(f"{term} clinical study scientific evidence FDA")
+                        queries += [
+                            f'site:elle.com "{term}"',
+                            f'site:cosmopolitan.com "{term}"',
+                            f'site:vogue.com "{term}"',
+                            f'site:marieclaire.com "{term}"',
+                            f'site:harpersbazaar.com "{term}"',
+                            f'site:gq.com "{term}"',
+                            f'site:ncbi.nlm.nih.gov "{term}"',
+                            f'site:fda.gov "{term}"',
+                            f'site:who.int "{term}"',
+                        ]
+                if country == "France":
+                    queries.append(f'site:lefigaro.fr OR site:lemonde.fr OR site:20minutes.fr "{venue_name}"')
+                else:
+                    queries.append(f'site:letemps.ch OR site:lematin.ch OR site:tdg.ch OR site:20min.ch "{venue_name}"')
+
+            elif "Simple Beauty Treatment" in category:
+                queries.append(f'site:elle.com OR site:elle.ch "{venue_name}"')
+                if country == "France":
+                    queries.append(f'site:lefigaro.fr OR site:lemonde.fr OR site:20minutes.fr "{venue_name}"')
+                else:
+                    queries.append(f'site:letemps.ch OR site:lematin.ch OR site:tdg.ch OR site:20min.ch "{venue_name}"')
 
             all_results = []
             for q in queries:
@@ -485,22 +527,30 @@ WEBSITE CONTENT:
                 if url in seen_urls:
                     continue
                 seen_urls.add(url)
-                if any(bad in domain for bad in banned_domains):
-                    continue
 
                 source_label = "General Web"
-                if "google" in domain:
-                    source_label = "GOOGLE REVIEWS"
-                elif "michelin" in domain:
+                if "michelin" in domain:
                     source_label = "MICHELIN GUIDE"
                 elif "gaultmillau" in domain:
                     source_label = "GAULT MILLAU"
                 elif "tripadvisor" in domain:
                     source_label = "TRIPADVISOR"
-                elif any(d in domain for d in ["lematin", "20min", "tdg.ch", "letemps", "lefigaro", "lemonde", "20minutes.fr"]):
+                elif "genevetourism" in domain or "lausanne-tourisme" in domain:
+                    source_label = "TOURISM BOARD"
+                elif any(d in domain for d in ["letemps", "lematin", "20min", "tdg.ch", "lefigaro", "lemonde", "20minutes.fr"]):
                     source_label = "PRESS"
+                elif "harpersbazaar" in domain:
+                    source_label = "BEAUTY/LIFESTYLE PRESS (Harper's Bazaar)"
+                elif "gq.com" in domain:
+                    source_label = "LIFESTYLE PRESS (GQ)"
                 elif any(d in domain for d in ["elle.com", "vogue.com", "cosmopolitan.com", "marieclaire.com"]):
-                    source_label = "BEAUTY PRESS"
+                    source_label = "BEAUTY/LIFESTYLE PRESS"
+                elif "ncbi.nlm.nih.gov" in domain:
+                    source_label = "SCIENTIFIC (PubMed)"
+                elif "fda.gov" in domain:
+                    source_label = "SCIENTIFIC (FDA)"
+                elif "who.int" in domain:
+                    source_label = "SCIENTIFIC (WHO)"
 
                 context_data.append(f"SOURCE: {source_label}\nURL: {url}\nTITLE: {title}\nSNIPPET: {content}\n-------------------")
 
@@ -660,6 +710,7 @@ RESEARCH DATA:
 
                 resolved_name = r_venue_name.strip()
                 resolved_city = r_city.strip()
+                crawl_content = ""
 
                 # URL-first: crawl and extract name/city if URL provided
                 if r_venue_url:
@@ -717,9 +768,31 @@ RESEARCH DATA:
 
                 r_status.write(f"🕵️ Researching '{resolved_name}' in {resolved_city}...")
                 gen_rules_r, _, _ = get_rules("BuyClub_Page_Analyzer_Brain", r_category)
-                research_data = perform_researcher_research(
-                    resolved_name, r_category, resolved_city, r_country, r_treatments, r_venue_url
+
+                # Build venue crawl block
+                crawl_block = ""
+                if r_venue_url and crawl_content:
+                    crawl_block = f"SOURCE: VENUE WEBSITE (direct crawl)\nURL: {r_venue_url}\nCONTENT:\n{crawl_content[:4000]}\n-------------------\n"
+
+                # Google Places rating + review snippets
+                r_status.write("⭐ Fetching Google rating...")
+                google_data = get_google_rating(resolved_name, resolved_city)
+                if google_data and google_data.get("rating"):
+                    google_block = (
+                        f"SOURCE: GOOGLE (Places API — verified)\n"
+                        f"URL: https://www.google.com/maps/search/{resolved_name.replace(' ', '+')}+{resolved_city.replace(' ', '+')}\n"
+                        f"RATING: {google_data['rating']} stars ({google_data.get('count', 'N/A')} reviews on Google)\n"
+                    )
+                    if google_data.get("snippets"):
+                        google_block += "REVIEW SNIPPETS:\n" + "\n".join(f"- {s}" for s in google_data["snippets"])
+                    google_block += "\n-------------------\n"
+                else:
+                    google_block = "SOURCE: GOOGLE (Places API)\nNOTE: No data found for this venue on Google Places.\n-------------------\n"
+
+                tavily_data = perform_researcher_research(
+                    resolved_name, r_category, resolved_city, r_country, r_treatments
                 )
+                research_data = crawl_block + google_block + tavily_data
 
                 r_status.write("🤖 Building marketing brief...")
                 brief = run_researcher_gemini(
