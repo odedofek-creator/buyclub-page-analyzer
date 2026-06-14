@@ -397,8 +397,8 @@ with tab1:
             return ""
 
     def get_google_rating(venue_name, city):
-        """Fetch rating, review count, and up to 5 review snippets via Google Places API."""
-        places_key = st.secrets.get("GOOGLE_PLACES_API_KEY", st.secrets.get("GOOGLE_API_KEY", ""))
+        """Fetch rating, review count, review snippets, and neighborhood via Google Places API."""
+        places_key = st.secrets.get("Google_Places_API_Key", "")
         if not places_key:
             return None
         try:
@@ -418,47 +418,82 @@ with tab1:
             details_url = "https://maps.googleapis.com/maps/api/place/details/json"
             r2 = requests.get(details_url, params={
                 "place_id": place_id,
-                "fields": "name,rating,user_ratings_total,reviews",
+                "fields": "name,rating,user_ratings_total,reviews,address_components",
                 "key": places_key
             }, timeout=10)
             r2.raise_for_status()
             result = r2.json().get("result", {})
             snippets = [rev.get("text", "") for rev in result.get("reviews", [])[:5] if rev.get("text")]
+
+            # Extract neighborhood from address_components
+            neighborhood = None
+            for comp in result.get("address_components", []):
+                types = comp.get("types", [])
+                if "neighborhood" in types or "sublocality_level_1" in types or "sublocality" in types:
+                    neighborhood = comp.get("long_name")
+                    break
+
             return {
                 "rating": result.get("rating"),
                 "count": result.get("user_ratings_total"),
-                "snippets": snippets
+                "snippets": snippets,
+                "neighborhood": neighborhood
             }
         except Exception:
             return None
 
-    def extract_name_and_city_from_crawl(crawl_content):
-        """Use Gemini to extract venue name and city from crawled website content."""
+    def extract_venue_details_from_crawl(crawl_content, category="", treatment_terms=""):
+        """Use Gemini to extract structured venue details from crawled website content."""
         try:
             model = genai.GenerativeModel(model_name='gemini-3.5-flash')
-            prompt = f"""From the following website content, extract:
-1. The venue/business name
-2. The city it is located in
 
-Reply in this exact format (two lines only):
-NAME: <venue name>
-CITY: <city name>
+            category_fields = ""
+            if "Restaurant" in category:
+                category_fields = """
+MENU_HIGHLIGHTS: <notable/signature dishes or menu description from the website>
+TERRACE: <Yes / No / Not mentioned>"""
+            elif "Simple Beauty Treatment" in category:
+                treatment_hint = f" (focus on: {treatment_terms})" if treatment_terms else ""
+                category_fields = f"""
+TREATMENT_DESCRIPTION: <description of the treatment(s) offered{treatment_hint}>
+PRICING: <pricing information from the website>"""
+            elif "High-Tech Aesthetic Treatment" in category:
+                treatment_hint = f" (focus on: {treatment_terms})" if treatment_terms else ""
+                category_fields = f"""
+TREATMENT_DESCRIPTION: <description of the treatment(s) offered{treatment_hint}>
+TREATMENT_BENEFITS: <benefits listed on the website for this treatment>
+PRICING: <pricing information>
+CONTRAINDICATIONS: <who should not do this treatment, any warnings or restrictions>"""
 
-If you cannot determine one of them, write NOT FOUND for that field.
+            prompt = f"""From the following website content, extract these fields.
+Reply in this exact format — one field per line. If a field is not found, write NOT FOUND.
+
+NAME: <business name>
+CITY: <city where the business is located>
+NEIGHBORHOOD: <neighborhood or district within the city, e.g. "Eaux-Vives", "Pâquis", "Champel", "Old Town">
+DATE_OPENED: <year or date the business first opened, e.g. "2019" or "Since 2015">
+ADDRESS: <full street address>
+PHONE: <phone number>
+HOURS: <opening days and hours>
+FACEBOOK: <full facebook.com URL if found>
+INSTAGRAM: <full instagram.com URL if found>
+STORY: <2-3 sentence brand story, mission, or marketing pitch from the About section>{category_fields}
 
 WEBSITE CONTENT:
-{crawl_content[:3000]}"""
+{crawl_content[:6000]}"""
+
             response = model.generate_content(prompt)
-            text = response.text.strip()
-            name, city = "NOT FOUND", "NOT FOUND"
-            for line in text.splitlines():
-                if line.startswith("NAME:"):
-                    name = line.replace("NAME:", "").strip()
-                elif line.startswith("CITY:"):
-                    city = line.replace("CITY:", "").strip()
-            return name, city
+            result = {}
+            for line in response.text.strip().splitlines():
+                if ":" in line:
+                    key, _, value = line.partition(":")
+                    k = key.strip().upper()
+                    v = value.strip()
+                    if k and v:
+                        result[k] = v
+            return result
         except Exception:
-            return "NOT FOUND", "NOT FOUND"
+            return {}
 
     def perform_researcher_research(venue_name, category, city, country, treatment_terms=""):
         """Run site:-specific Tavily searches for the Marketing Researcher tab."""
@@ -564,40 +599,115 @@ WEBSITE CONTENT:
         if "Restaurant" in category:
             output_structure = """
 OUTPUT STRUCTURE (use these exact section headers):
-## Overview
+
+## Venue Details
+Include (from the VENUE WEBSITE structured extraction in the research data):
+Neighborhood | Address | Phone | Opening Hours | Facebook | Instagram | Date Opened | Terrace
+Format social links as clickable markdown: [Facebook](url) and [Instagram](url).
+Only include fields that were found. Do not list fields that are NOT FOUND here — those go in the final "Not Found" section.
+
+## About the Restaurant
+Concept, cuisine type, brand story / marketing pitch. Sourced from venue website.
+
+## Menu Highlights
+Notable or signature dishes from the website. If none found, write "Not found."
+
 ## Ratings & Awards
+Google rating (verified via Places API), TripAdvisor, Michelin, Gault Millau, Tourism Board awards.
+
 ## Press Mentions
+Swiss or French press coverage of the venue. Quoted with clickable links.
+
 ## Key Marketing Points
+Copywriter-ready claims. All factual claims linked to source.
+
 ## Not Found
+List each specific thing that was searched for but not found (e.g. "Michelin: not found", "Gault Millau: not found", "TripAdvisor: not found", "Press coverage: not found", "Neighborhood: not found", etc.)
 """
         elif "Simple Beauty Treatment" in category:
             output_structure = """
 OUTPUT STRUCTURE (use these exact section headers):
-## Treatment Overview
+
+## Venue Details
+Include (from the VENUE WEBSITE structured extraction in the research data):
+Neighborhood | Address | Phone | Opening Hours | Facebook | Instagram | Date Opened
+Format social links as clickable markdown: [Facebook](url) and [Instagram](url).
+Only include fields that were found. Do not list fields that are NOT FOUND here — those go in the final "Not Found" section.
+
 ## About the Venue
+Brand story / marketing pitch, specialization, credentials. Sourced from venue website.
+
+## Treatment
+Description and pricing from the venue website. Label this as "From venue website." If not found, say so.
+
 ## Venue Reviews & Ratings
+Google rating + review count (verified via Places API). Up to 5 review snippets for copywriter use.
+
 ## Press Mentions
+Swiss/French press or Elle coverage of the venue. Quoted with clickable links.
+
 ## Key Marketing Points
+What makes this venue distinctive. All factual claims linked to source.
+
 ## Not Found
+List each specific thing that was searched for but not found.
 """
         elif "High-Tech Aesthetic Treatment" in category:
             output_structure = """
 OUTPUT STRUCTURE (use these exact section headers):
-## Treatment Overview
-## Clinical & Scientific Backing
-## Beauty Press Coverage
+
+## Venue Details
+Include (from the VENUE WEBSITE structured extraction in the research data):
+Neighborhood | Address | Phone | Opening Hours | Facebook | Instagram | Date Opened
+Format social links as clickable markdown: [Facebook](url) and [Instagram](url).
+Only include fields that were found. Do not list fields that are NOT FOUND here — those go in the final "Not Found" section.
+
 ## About the Venue
+Brand story / marketing pitch, practitioner credentials. Sourced from venue website.
+
+## Treatment
+Description, benefits, pricing, and contraindications from the venue website. Label each item as "From venue website."
+If any sub-item is not found, say so within this section.
+
+## Clinical & Scientific Backing
+PubMed, FDA, WHO sources only. Every claim linked to source. Beauty clinic websites are not accepted here.
+
+## Beauty & Lifestyle Press Coverage
+Elle, Cosmo, Vogue, Marie Claire, Harper's Bazaar, GQ — for the treatment. Quoted with clickable links.
+
 ## Venue Reviews & Ratings
+Google rating + review count (verified via Places API). Up to 5 review snippets.
+
+## Local Press Mentions
+Swiss or French press coverage of the venue. Quoted with clickable links.
+
 ## Key Marketing Points
+Copywriter-ready claims. Clinical claims only from verified scientific sources.
+
 ## Not Found
+List each specific thing that was searched for but not found.
 """
         else:
             output_structure = """
 OUTPUT STRUCTURE (use these exact section headers):
+
+## Venue Details
+Include (from the VENUE WEBSITE structured extraction in the research data):
+Neighborhood | Address | Phone | Opening Hours | Facebook | Instagram | Date Opened
+Format social links as clickable markdown: [Facebook](url) and [Instagram](url).
+Only include fields that were found.
+
 ## Overview
+Concept and what makes the venue distinctive.
+
 ## Reviews & Ratings
+Google rating (verified via Places API) and any other platforms found.
+
 ## Key Marketing Points
+Copywriter-ready claims. All factual claims linked to source.
+
 ## Not Found
+List each specific thing that was searched for but not found.
 """
 
         system_prompt = f"""You are a Marketing Researcher for BuyClub, a premium members-only deals platform in Geneva and Lausanne.
@@ -712,43 +822,47 @@ RESEARCH DATA:
                 resolved_city = r_city.strip()
                 crawl_content = ""
 
-                # URL-first: crawl and extract name/city if URL provided
+                # Normalize text for comparison: lowercase + remove accents
+                def normalize(text):
+                    replacements = {"é":"e","è":"e","ê":"e","ë":"e","à":"a","â":"a","ä":"a","î":"i","ï":"i","ô":"o","ö":"o","ù":"u","û":"u","ü":"u","ç":"c"}
+                    t = text.lower().strip()
+                    for accented, plain in replacements.items():
+                        t = t.replace(accented, plain)
+                    return t
+
+                city_aliases = [
+                    {"geneva", "geneve", "genf"},
+                    {"zurich", "zurich"},
+                    {"bern", "berne"},
+                    {"basel", "bale"},
+                    {"lausanne"},
+                ]
+
+                def cities_match(a, b):
+                    na, nb = normalize(a), normalize(b)
+                    if na == nb:
+                        return True
+                    for alias_group in city_aliases:
+                        if na in alias_group and nb in alias_group:
+                            return True
+                    return False
+
+                venue_details = {}
+
+                # URL-first: crawl and extract name/city + full details if URL provided
                 if r_venue_url:
                     r_status.write("🌐 Crawling venue website...")
                     crawl_content = crawl_venue_url(r_venue_url)
                     if crawl_content:
-                        extracted_name, extracted_city = extract_name_and_city_from_crawl(crawl_content)
+                        r_status.write("🔍 Extracting venue details from website...")
+                        venue_details = extract_venue_details_from_crawl(crawl_content, r_category, r_treatments)
+                        extracted_name = venue_details.get("NAME", "NOT FOUND")
+                        extracted_city = venue_details.get("CITY", "NOT FOUND")
 
-                        # Normalize text for comparison: lowercase + remove accents
-                        def normalize(text):
-                            replacements = {"é":"e","è":"e","ê":"e","ë":"e","à":"a","â":"a","ä":"a","î":"i","ï":"i","ô":"o","ö":"o","ù":"u","û":"u","ü":"u","ç":"c"}
-                            t = text.lower().strip()
-                            for accented, plain in replacements.items():
-                                t = t.replace(accented, plain)
-                            return t
-
-                        # Known city aliases (pairs that should not trigger a conflict)
-                        city_aliases = [
-                            {"geneva", "geneve", "genf"},
-                            {"zurich", "zurich"},
-                            {"bern", "berne"},
-                            {"basel", "bale"},
-                            {"lausanne"},
-                        ]
-
-                        def cities_match(a, b):
-                            na, nb = normalize(a), normalize(b)
-                            if na == nb:
-                                return True
-                            for alias_group in city_aliases:
-                                if na in alias_group and nb in alias_group:
-                                    return True
-                            return False
-
-                        # Conflict detection: flag if extracted values differ from manual input
+                        # Conflict detection
                         if resolved_name and extracted_name != "NOT FOUND":
                             if normalize(extracted_name) != normalize(resolved_name):
-                                st.warning(f"⚠️ **Name conflict:** URL crawl found **\"{extracted_name}\"** but you entered **\"{resolved_name}\"**. Proceeding with your manual entry — double-check that the URL is for the right venue.")
+                                st.warning(f"⚠️ **Name conflict:** URL crawl found **\"{extracted_name}\"** but you entered **\"{resolved_name}\"**. Proceeding with your manual entry.")
                         if r_city.strip() and extracted_city != "NOT FOUND":
                             if not cities_match(extracted_city, r_city.strip()):
                                 st.warning(f"⚠️ **City conflict:** URL crawl found **\"{extracted_city}\"** but you entered **\"{r_city.strip()}\"**. Proceeding with your manual entry.")
@@ -756,7 +870,7 @@ RESEARCH DATA:
                         # Auto-fill only if manual fields are empty
                         if not resolved_name and extracted_name != "NOT FOUND":
                             resolved_name = extracted_name
-                        if not r_venue_name and extracted_city != "NOT FOUND":
+                        if not r_city.strip() and extracted_city != "NOT FOUND":
                             resolved_city = extracted_city
                     else:
                         r_status.write("⚠️ Could not crawl venue URL — using manually entered details.")
@@ -769,20 +883,37 @@ RESEARCH DATA:
                 r_status.write(f"🕵️ Researching '{resolved_name}' in {resolved_city}...")
                 gen_rules_r, _, _ = get_rules("BuyClub_Page_Analyzer_Brain", r_category)
 
-                # Build venue crawl block
-                crawl_block = ""
-                if r_venue_url and crawl_content:
-                    crawl_block = f"SOURCE: VENUE WEBSITE (direct crawl)\nURL: {r_venue_url}\nCONTENT:\n{crawl_content[:4000]}\n-------------------\n"
+                # Build structured venue details block from crawl extraction
+                venue_details_block = ""
+                if venue_details:
+                    field_labels = {
+                        "NAME": "Business Name", "CITY": "City", "NEIGHBORHOOD": "Neighborhood",
+                        "DATE_OPENED": "Date Opened", "ADDRESS": "Address", "PHONE": "Phone",
+                        "HOURS": "Opening Hours", "FACEBOOK": "Facebook", "INSTAGRAM": "Instagram",
+                        "STORY": "Brand Story / Marketing Pitch",
+                        "MENU_HIGHLIGHTS": "Menu Highlights", "TERRACE": "Terrace",
+                        "TREATMENT_DESCRIPTION": "Treatment Description",
+                        "TREATMENT_BENEFITS": "Treatment Benefits",
+                        "PRICING": "Pricing", "CONTRAINDICATIONS": "Contraindications",
+                    }
+                    lines = [f"SOURCE: VENUE WEBSITE (structured extraction)\nURL: {r_venue_url}"]
+                    for key, label in field_labels.items():
+                        val = venue_details.get(key, "")
+                        if val and val.upper() != "NOT FOUND":
+                            lines.append(f"{label}: {val}")
+                    venue_details_block = "\n".join(lines) + "\n-------------------\n"
 
-                # Google Places rating + review snippets
+                # Google Places: rating, review snippets, neighborhood
                 r_status.write("⭐ Fetching Google rating...")
                 google_data = get_google_rating(resolved_name, resolved_city)
                 if google_data and google_data.get("rating"):
+                    maps_url = f"https://www.google.com/maps/search/{resolved_name.replace(' ', '+')}+{resolved_city.replace(' ', '+')}"
                     google_block = (
-                        f"SOURCE: GOOGLE (Places API — verified)\n"
-                        f"URL: https://www.google.com/maps/search/{resolved_name.replace(' ', '+')}+{resolved_city.replace(' ', '+')}\n"
-                        f"RATING: {google_data['rating']} stars ({google_data.get('count', 'N/A')} reviews on Google)\n"
+                        f"SOURCE: GOOGLE (Places API — verified)\nURL: {maps_url}\n"
+                        f"RATING: {google_data['rating']} stars ({google_data.get('count', 'N/A')} Google reviews)\n"
                     )
+                    if google_data.get("neighborhood"):
+                        google_block += f"NEIGHBORHOOD (from Google): {google_data['neighborhood']}\n"
                     if google_data.get("snippets"):
                         google_block += "REVIEW SNIPPETS:\n" + "\n".join(f"- {s}" for s in google_data["snippets"])
                     google_block += "\n-------------------\n"
@@ -792,7 +923,7 @@ RESEARCH DATA:
                 tavily_data = perform_researcher_research(
                     resolved_name, r_category, resolved_city, r_country, r_treatments
                 )
-                research_data = crawl_block + google_block + tavily_data
+                research_data = venue_details_block + google_block + tavily_data
 
                 r_status.write("🤖 Building marketing brief...")
                 brief = run_researcher_gemini(
