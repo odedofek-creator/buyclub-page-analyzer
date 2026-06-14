@@ -381,6 +381,10 @@ with tab1:
         st.session_state.research_city = ""
     if 'research_country' not in st.session_state:
         st.session_state.research_country = ""
+    if 'researcher_running' not in st.session_state:
+        st.session_state.researcher_running = False
+    if 'last_research_time' not in st.session_state:
+        st.session_state.last_research_time = 0
 
     # --------------------------------------------------------------------------
     # HELPER FUNCTIONS
@@ -480,7 +484,7 @@ INSTAGRAM: <full instagram.com URL if found>
 STORY: <2-3 sentence brand story, mission, or marketing pitch from the About section>{category_fields}
 
 WEBSITE CONTENT:
-{crawl_content[:6000]}"""
+{crawl_content[:12000]}"""
 
             response = model.generate_content(prompt)
             result = {}
@@ -495,10 +499,23 @@ WEBSITE CONTENT:
         except Exception:
             return {}
 
-    def perform_researcher_research(venue_name, category, city, country, treatment_terms=""):
+    def perform_researcher_research(venue_name, category, city, country, treatment_terms="", venue_url=""):
         """Run site:-specific Tavily searches for the Marketing Researcher tab."""
         try:
+            from urllib.parse import urlparse
             queries = []
+
+            # Always: search the venue's own site for subpages we can't get from homepage alone
+            if venue_url:
+                try:
+                    venue_domain = urlparse(venue_url).netloc
+                    queries.append(f'site:{venue_domain} contact hours phone address')
+                    queries.append(f'site:{venue_domain} instagram facebook social')
+                    if treatment_terms:
+                        for term in [t.strip() for t in treatment_terms.split(',')]:
+                            queries.append(f'site:{venue_domain} "{term}"')
+                except Exception:
+                    pass
 
             if "Restaurant" in category:
                 if country == "France":
@@ -565,8 +582,18 @@ WEBSITE CONTENT:
                     continue
                 seen_urls.add(url)
 
+                # Check if this result is from the venue's own domain
+                venue_domain_check = ""
+                if venue_url:
+                    try:
+                        venue_domain_check = urlparse(venue_url).netloc
+                    except Exception:
+                        pass
+
                 source_label = "General Web"
-                if "michelin" in domain:
+                if venue_domain_check and venue_domain_check in domain:
+                    source_label = "VENUE WEBSITE (subpage)"
+                elif "michelin" in domain:
                     source_label = "MICHELIN GUIDE"
                 elif "gaultmillau" in domain:
                     source_label = "GAULT MILLAU"
@@ -815,7 +842,12 @@ RESEARCH DATA:
 
     r_special = st.text_area("Special Instructions (Optional)", height=80, key="r_special")
 
-    research_btn = st.button("Run Research", type="primary", use_container_width=True)
+    research_btn = st.button(
+        "⏳ Research running..." if st.session_state.researcher_running else "Run Research",
+        type="primary",
+        use_container_width=True,
+        disabled=st.session_state.researcher_running
+    )
 
     # --------------------------------------------------------------------------
     # MAIN LOGIC
@@ -826,7 +858,11 @@ RESEARCH DATA:
             st.error("Deal Name is required.")
         elif not r_venue_name and not r_venue_url:
             st.error("Provide either a Venue URL or a Venue Name.")
+        elif time.time() - st.session_state.last_research_time < 5:
+            st.warning("Please wait a moment before running again.")
         else:
+            st.session_state.researcher_running = True
+            st.session_state.last_research_time = time.time()
             st.session_state.research_result = None
 
             with st.status("Running Research...", expanded=True) as r_status:
@@ -891,6 +927,7 @@ RESEARCH DATA:
                 if not resolved_name:
                     st.error("Could not determine venue name from URL. Please enter it manually.")
                     r_status.update(label="❌ Missing venue name", state="error", expanded=False)
+                    st.session_state.researcher_running = False
                     st.stop()
 
                 r_status.write(f"🕵️ Researching '{resolved_name}' in {resolved_city}...")
@@ -932,9 +969,10 @@ RESEARCH DATA:
                     google_block += "\n-------------------\n"
                 else:
                     google_block = "SOURCE: GOOGLE (Places API)\nNOTE: No data found for this venue on Google Places.\n-------------------\n"
+                    r_status.write("⚠️ Google Places returned no data. Check that the Google_Places_API_Key secret is set and the Places API is enabled on your Google Cloud project.")
 
                 tavily_data = perform_researcher_research(
-                    resolved_name, r_category, resolved_city, r_country, r_treatments
+                    resolved_name, r_category, resolved_city, r_country, r_treatments, r_venue_url
                 )
                 research_data = venue_details_block + google_block + tavily_data
 
@@ -953,6 +991,8 @@ RESEARCH DATA:
                 st.session_state.research_country = r_country
 
                 r_status.update(label="✅ Research Complete", state="complete", expanded=False)
+
+            st.session_state.researcher_running = False
 
     # --------------------------------------------------------------------------
     # DISPLAY BRIEF & ACTIONS
