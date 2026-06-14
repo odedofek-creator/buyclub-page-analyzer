@@ -141,7 +141,7 @@ def extract_text_from_file(uploaded_file):
             
         elif uploaded_file.type in ["image/jpeg", "image/png", "image/jpg"]:
             image = Image.open(uploaded_file)
-            ocr_model = genai.GenerativeModel('gemini-2.5-flash')
+            ocr_model = genai.GenerativeModel('gemini-3.5-flash')
             ocr_response = ocr_model.generate_content([
                 "Extract all the text from this contract/document exactly as it appears. Do not add any extra commentary.", 
                 image
@@ -312,7 +312,7 @@ def analyze_with_gemini(scraped_txt, prev_txt, contract_txt, search_data, gen_ru
     """
 
     try:
-        model = genai.GenerativeModel(model_name='gemini-2.5-flash', system_instruction=system_prompt)
+        model = genai.GenerativeModel(model_name='gemini-3.5-flash', system_instruction=system_prompt)
         response = model.generate_content(user_prompt)
         return response.text
     except Exception as e:
