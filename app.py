@@ -377,8 +377,24 @@ def get_archive_data(archive_tab_name):
     except Exception:
         return None, None
 
+def delete_archive_record(archive_tab_name, timestamp):
+    """Delete a record from an archive tab by matching its Timestamp value."""
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
+        client = gspread.authorize(creds)
+        ws = client.open("BuyClub_Page_Analyzer_Brain").worksheet(archive_tab_name)
+        all_rows = ws.get_all_values()
+        for i, row in enumerate(all_rows):
+            if row and row[0] == timestamp:
+                ws.delete_rows(i + 1)  # gspread rows are 1-indexed
+                return True
+        return False
+    except Exception:
+        return False
+
 def render_archive_tab(archive_tab_name, title_field, subtitle_fields, body_field, score_field=None):
-    """Render a read-only archive sub-tab with search and expandable records."""
+    """Render an archive sub-tab with search, expandable records, and delete."""
     col_refresh, _ = st.columns([1, 5])
     with col_refresh:
         if st.button("🔄 Refresh", key=f"refresh_{archive_tab_name}"):
@@ -405,9 +421,10 @@ def render_archive_tab(archive_tab_name, title_field, subtitle_fields, body_fiel
     else:
         st.caption(f"Showing {len(shown)} of {total} records — newest first" + (" · showing most recent 50" if len(filtered) > 50 else ""))
 
-    for rec in shown:
+    for i, rec in enumerate(shown):
         title = rec.get(title_field, "Untitled")
-        date = rec.get("Timestamp", "")[:10]
+        ts = rec.get("Timestamp", "")
+        date = ts[:10]
 
         parts = []
         for field in subtitle_fields:
@@ -426,7 +443,6 @@ def render_archive_tab(archive_tab_name, title_field, subtitle_fields, body_fiel
         with st.expander(label, expanded=False):
             body = rec.get(body_field, "").strip()
             if not body:
-                # Fall back to last column value — header name may differ from expected
                 last_val = list(rec.values())[-1] if rec else ""
                 body = str(last_val).strip() if last_val else ""
             if body:
@@ -437,9 +453,43 @@ def render_archive_tab(archive_tab_name, title_field, subtitle_fields, body_fiel
             else:
                 st.caption("No content saved.")
 
+            st.markdown("---")
+            confirm_key = f"confirm_del_{archive_tab_name}_{i}"
+            if st.session_state.get(confirm_key):
+                st.warning("Delete this record permanently? This cannot be undone.")
+                col_yes, col_no, _ = st.columns([1, 1, 4])
+                with col_yes:
+                    if st.button("Delete", key=f"yes_{archive_tab_name}_{i}", type="primary"):
+                        if delete_archive_record(archive_tab_name, ts):
+                            get_archive_data.clear()
+                            st.session_state.pop(confirm_key, None)
+                            st.toast("Record deleted.", icon="🗑️")
+                            st.rerun()
+                        else:
+                            st.error("Delete failed.")
+                with col_no:
+                    if st.button("Cancel", key=f"no_{archive_tab_name}_{i}"):
+                        st.session_state.pop(confirm_key, None)
+                        st.rerun()
+            else:
+                if st.button("🗑️ Delete this record", key=f"del_{archive_tab_name}_{i}"):
+                    st.session_state[confirm_key] = True
+                    st.rerun()
+
 # ==============================================================================
 # UI LAYOUT
 # ==============================================================================
+
+st.markdown("""
+<style>
+div.stButton > button[kind="primary"] {
+    min-height: 3rem;
+    font-size: 1.05rem;
+    font-weight: 700;
+    padding: 0.5rem 1.5rem;
+}
+</style>
+""", unsafe_allow_html=True)
 
 tab1, tab2, tab3 = st.tabs(["🔍 Marketing Researcher", "🛡️ Page Analyzer", "📋 Archive Viewer"])
 
@@ -1223,6 +1273,28 @@ RESEARCH DATA:
                 st.error(st.session_state.research_result)
             else:
                 st.markdown(st.session_state.research_result)
+            st.markdown("---")
+            r_bot1, r_bot2 = st.columns(2)
+            with r_bot1:
+                if st.button("💾 Save to Research Archive", use_container_width=True, key="r_save_bottom", type="primary"):
+                    if sh:
+                        with st.spinner("Saving..."):
+                            archive_research(
+                                sh,
+                                st.session_state.research_archive_name,
+                                st.session_state.research_category,
+                                st.session_state.research_venue_name,
+                                st.session_state.research_city,
+                                st.session_state.research_country,
+                                st.session_state.research_result
+                            )
+                    else:
+                        st.error("Cannot save: Google Sheets connection unavailable.")
+            with r_bot2:
+                if st.button("🗑️ Clear", use_container_width=True, key="r_clear_bottom"):
+                    st.session_state.research_result = None
+                    st.session_state.research_raw_data = None
+                    st.rerun()
 
     # --------------------------------------------------------------------------
     # FEEDBACK LOOP
@@ -1385,6 +1457,21 @@ with tab2:
                 st.error(st.session_state.analysis_result)
             else:
                 st.markdown(st.session_state.analysis_result)
+            st.markdown("---")
+            col_bot1, col_bot2 = st.columns(2)
+            with col_bot1:
+                if st.button("💾 Save to Archive", use_container_width=True, key="a_save_bottom", type="primary"):
+                    if sh:
+                        with st.spinner("Saving to Google Sheets..."):
+                            archive_report(sh, st.session_state.current_archive_name, st.session_state.current_category, st.session_state.analysis_result)
+                    else:
+                        st.error("Cannot save: Google Sheets connection unavailable")
+            with col_bot2:
+                if st.button("🗑️ Trash / Clear", use_container_width=True, key="a_clear_bottom"):
+                    st.session_state.analysis_result = None
+                    st.session_state.current_archive_name = ""
+                    st.session_state.current_category = ""
+                    st.rerun()
 
     # --------------------------------------------------------------------------
     # FEEDBACK LOOP
