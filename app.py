@@ -352,6 +352,83 @@ def save_feedback_rule(sheet_obj, rule_text):
     except Exception as e:
         st.error(f"Failed to save rule: {e}")
 
+@st.cache_data(ttl=60)
+def get_archive_data(archive_tab_name):
+    """Fetch all records from an archive tab. Returns (records, headers) newest-first, or (None, None) on error."""
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
+        client = gspread.authorize(creds)
+        ws = client.open("BuyClub_Page_Analyzer_Brain").worksheet(archive_tab_name)
+        all_rows = ws.get_all_values()
+        if len(all_rows) < 2:
+            return [], []
+        headers = all_rows[0]
+        records = []
+        for row in reversed(all_rows[1:]):
+            if any(cell.strip() for cell in row):
+                record = {headers[i]: (row[i] if i < len(row) else "") for i in range(len(headers))}
+                records.append(record)
+        return records, headers
+    except Exception:
+        return None, None
+
+def render_archive_tab(archive_tab_name, title_field, subtitle_fields, body_field, score_field=None):
+    """Render a read-only archive sub-tab with search and expandable records."""
+    col_refresh, _ = st.columns([1, 5])
+    with col_refresh:
+        if st.button("🔄 Refresh", key=f"refresh_{archive_tab_name}"):
+            get_archive_data.clear()
+            st.rerun()
+
+    records, _ = get_archive_data(archive_tab_name)
+
+    if records is None:
+        st.error(f"Could not load {archive_tab_name}. Check Google Sheets connection.")
+        return
+    if not records:
+        st.info("No records yet.")
+        return
+
+    total = len(records)
+    search = st.text_input("Filter by deal name", key=f"search_{archive_tab_name}", placeholder="Type to filter...")
+
+    filtered = [r for r in records if search.lower() in r.get(title_field, "").lower()] if search else records
+    shown = filtered[:50]
+
+    if search and len(filtered) != total:
+        st.caption(f"Showing {len(shown)} of {len(filtered)} matching (total in archive: {total})")
+    else:
+        st.caption(f"Showing {len(shown)} of {total} records — newest first" + (" · showing most recent 50" if len(filtered) > 50 else ""))
+
+    for rec in shown:
+        title = rec.get(title_field, "Untitled")
+        date = rec.get("Timestamp", "")[:10]
+
+        parts = []
+        for field in subtitle_fields:
+            val = rec.get(field, "").strip()
+            if val:
+                parts.append(val)
+        if score_field:
+            score = rec.get(score_field, "").strip()
+            if score:
+                parts.append(f"Score: {score}/100")
+
+        label = f"{title}   {date}"
+        if parts:
+            label += f"   —   {' · '.join(parts)}"
+
+        with st.expander(label, expanded=False):
+            body = rec.get(body_field, "").strip()
+            if body:
+                if "FATAL ERROR" in body:
+                    st.error(body)
+                else:
+                    st.markdown(body)
+            else:
+                st.caption("No content saved.")
+
 # ==============================================================================
 # UI LAYOUT
 # ==============================================================================
@@ -1313,11 +1390,30 @@ with tab2:
                 st.error("Database not connected.")
 
 # ==============================================================================
-# TAB 3 — ARCHIVE VIEWER (coming next)
+# TAB 3 — ARCHIVE VIEWER
 # ==============================================================================
 
 with tab3:
-    st.info("📋 Archive Viewer — coming soon.")
+
+    arch_analysis, arch_research = st.tabs(["📊 Analysis Archive", "🔍 Research Archive"])
+
+    with arch_analysis:
+        render_archive_tab(
+            archive_tab_name="Analysis_Archive",
+            title_field="Deal Name",
+            subtitle_fields=["Category"],
+            body_field="Full Report",
+            score_field="Score"
+        )
+
+    with arch_research:
+        render_archive_tab(
+            archive_tab_name="Research_Archive",
+            title_field="Deal Name",
+            subtitle_fields=["Category", "Venue Name", "City"],
+            body_field="Full Brief",
+            score_field=None
+        )
 
 if DEBUG_MODE:
     st.markdown("---")
