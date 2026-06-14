@@ -502,20 +502,22 @@ with tab1:
             details_url = "https://maps.googleapis.com/maps/api/place/details/json"
             r2 = requests.get(details_url, params={
                 "place_id": place_id,
-                "fields": "name,rating,user_ratings_total,reviews,address_components",
+                "fields": "name,rating,user_ratings_total,reviews,address_components,vicinity",
                 "key": places_key
             }, timeout=10)
             r2.raise_for_status()
             result = r2.json().get("result", {})
             snippets = [rev.get("text", "") for rev in result.get("reviews", [])[:5] if rev.get("text")]
 
-            # Extract neighborhood from address_components
+            # Extract neighborhood: try address_components first, fall back to vicinity
             neighborhood = None
             for comp in result.get("address_components", []):
                 types = comp.get("types", [])
                 if "neighborhood" in types or "sublocality_level_1" in types or "sublocality" in types:
                     neighborhood = comp.get("long_name")
                     break
+            if not neighborhood:
+                neighborhood = result.get("vicinity")  # e.g. "Rue de Neuchâtel 29, Genève"
 
             return {
                 "rating": result.get("rating"),
