@@ -421,6 +421,10 @@ def render_archive_tab(archive_tab_name, title_field, subtitle_fields, body_fiel
 
         with st.expander(label, expanded=False):
             body = rec.get(body_field, "").strip()
+            if not body:
+                # Fall back to last column value — header name may differ from expected
+                last_val = list(rec.values())[-1] if rec else ""
+                body = str(last_val).strip() if last_val else ""
             if body:
                 if "FATAL ERROR" in body:
                     st.error(body)
