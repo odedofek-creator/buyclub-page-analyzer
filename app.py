@@ -562,6 +562,7 @@ CITATION RULES — MANDATORY:
 
 OUTPUT RULES:
 - If a section has no findings, write "Not found." under that header — do not skip it.
+- The "Not Found" section at the end must list each specific thing that was searched for but not found. For example: "Michelin Guide mention: not found.", "TripAdvisor Certificate of Excellence: not found.", "Swiss press coverage: not found." Do not just write "Not found." with no context.
 - Be specific and useful. The copywriter needs real claims they can use on a deal page.
 - Output in English only.
 
