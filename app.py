@@ -531,6 +531,8 @@ WEBSITE CONTENT:
                             f'site:ncbi.nlm.nih.gov "{term}"',
                             f'site:fda.gov "{term}"',
                             f'site:who.int "{term}"',
+                            f'site:realself.com "{term}"',
+                            f'site:healthline.com "{term}"',
                         ]
                 if country == "France":
                     queries.append(f'site:lefigaro.fr OR site:lemonde.fr OR site:20minutes.fr "{venue_name}"')
@@ -586,6 +588,10 @@ WEBSITE CONTENT:
                     source_label = "SCIENTIFIC (FDA)"
                 elif "who.int" in domain:
                     source_label = "SCIENTIFIC (WHO)"
+                elif "realself" in domain:
+                    source_label = "TREATMENT PLATFORM (RealSelf)"
+                elif "healthline" in domain:
+                    source_label = "HEALTH EDITORIAL (Healthline)"
 
                 context_data.append(f"SOURCE: {source_label}\nURL: {url}\nTITLE: {title}\nSNIPPET: {content}\n-------------------")
 
@@ -604,7 +610,7 @@ OUTPUT STRUCTURE (use these exact section headers):
 Include (from the VENUE WEBSITE structured extraction in the research data):
 Neighborhood | Address | Phone | Opening Hours | Facebook | Instagram | Date Opened | Terrace
 Format social links as clickable markdown: [Facebook](url) and [Instagram](url).
-Only include fields that were found. Do not list fields that are NOT FOUND here — those go in the final "Not Found" section.
+List ALL fields. For each field: show the value if found, or write "Not found." if not. Do not move these to the bottom "Not Found" section — handle them here inline.
 
 ## About the Restaurant
 Concept, cuisine type, brand story / marketing pitch. Sourced from venue website.
@@ -632,7 +638,7 @@ OUTPUT STRUCTURE (use these exact section headers):
 Include (from the VENUE WEBSITE structured extraction in the research data):
 Neighborhood | Address | Phone | Opening Hours | Facebook | Instagram | Date Opened
 Format social links as clickable markdown: [Facebook](url) and [Instagram](url).
-Only include fields that were found. Do not list fields that are NOT FOUND here — those go in the final "Not Found" section.
+List ALL fields. For each field: show the value if found, or write "Not found." if not. Do not move these to the bottom "Not Found" section — handle them here inline.
 
 ## About the Venue
 Brand story / marketing pitch, specialization, credentials. Sourced from venue website.
@@ -660,7 +666,7 @@ OUTPUT STRUCTURE (use these exact section headers):
 Include (from the VENUE WEBSITE structured extraction in the research data):
 Neighborhood | Address | Phone | Opening Hours | Facebook | Instagram | Date Opened
 Format social links as clickable markdown: [Facebook](url) and [Instagram](url).
-Only include fields that were found. Do not list fields that are NOT FOUND here — those go in the final "Not Found" section.
+List ALL fields. For each field: show the value if found, or write "Not found." if not. Do not move these to the bottom "Not Found" section — handle them here inline.
 
 ## About the Venue
 Brand story / marketing pitch, practitioner credentials. Sourced from venue website.
@@ -695,7 +701,7 @@ OUTPUT STRUCTURE (use these exact section headers):
 Include (from the VENUE WEBSITE structured extraction in the research data):
 Neighborhood | Address | Phone | Opening Hours | Facebook | Instagram | Date Opened
 Format social links as clickable markdown: [Facebook](url) and [Instagram](url).
-Only include fields that were found.
+List ALL fields. For each field: show the value if found, or write "Not found." if not.
 
 ## Overview
 Concept and what makes the venue distinctive.
@@ -713,17 +719,24 @@ List each specific thing that was searched for but not found.
         system_prompt = f"""You are a Marketing Researcher for BuyClub, a premium members-only deals platform in Geneva and Lausanne.
 Your job is to produce a sourced marketing brief about a venue or treatment to help a copywriter write a compelling deal page.
 
-CITATION RULES — MANDATORY:
-- Every factual claim about the venue must include a real clickable markdown link: [source name](full URL). No URL = do not include the claim.
-- Ratings (Google, TripAdvisor, etc.) must only be cited if found directly on that platform's own domain (google.com, tripadvisor.com). If a rating is mentioned on a third-party site (e.g. Instagram, a blog, another clinic), label it clearly: "Reported as X stars (unverified — source: [name](url))".
-- Clinical and scientific claims must come from peer-reviewed journals, government health agencies (FDA, WHO, ANSM), or official hospital/university publications. Claims from beauty clinic websites, influencer articles, or commercial sites do NOT count as scientific backing — omit them or move them to General Information.
-- General Information (treatment descriptions, mechanisms, generic benefits from your training knowledge) does not need a URL but must be clearly labeled as "General Information".
+SOURCE LABELING — MANDATORY ON EVERY PIECE OF INFORMATION:
+Every single item in the output must be labeled with where it came from. No exceptions.
+Use one of these labels, inline before or after the fact:
+- `[Merchant website]` — info extracted from the venue's own website crawl
+- `[Google]` — data from Google Places API (rating, review count, neighborhood, review snippets)
+- `[General Information]` — your own training knowledge, not from any search result. No URL needed but must be clearly labeled.
+- For all other sources: include a clickable markdown link: [Source Name](full URL)
+
+ADDITIONAL RULES:
+- Ratings must only be cited if the data came from that platform's own domain (Google Places API for Google, tripadvisor.com for TripAdvisor). If a rating appears on a third-party page, label it: "Reported as X stars — unverified, from [source](url)"
+- Clinical/scientific claims: only PubMed, FDA, WHO, ANSM, or government health agencies qualify. Beauty clinic websites, influencer articles, and commercial sites do NOT count as scientific backing — move them to General Information if useful, or omit.
+- Do not hallucinate. If a claim doesn't appear in the research data and isn't from your training knowledge, do not include it.
 - Ignore low-authority sources: personal blogs, forum posts, aggregators.
 
 OUTPUT RULES:
 - If a section has no findings, write "Not found." under that header — do not skip it.
-- The "Not Found" section at the end must list each specific thing that was searched for but not found. For example: "Michelin Guide mention: not found.", "TripAdvisor Certificate of Excellence: not found.", "Swiss press coverage: not found." Do not just write "Not found." with no context.
-- Be specific and useful. The copywriter needs real claims they can use on a deal page.
+- The "Not Found" section at the end must list each external source that was searched but returned nothing (e.g. "Michelin Guide: not found", "Swiss press: not found"). Do not re-list venue detail fields there — those are handled inline in the Venue Details section.
+- Be specific and useful. The copywriter needs real, labeled, trustworthy claims.
 - Output in English only.
 
 {output_structure}"""
