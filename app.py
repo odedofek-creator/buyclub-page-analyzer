@@ -89,6 +89,8 @@ sh = init_google_sheets()
 # ==============================================================================
 if 'analysis_result' not in st.session_state:
     st.session_state.analysis_result = None
+if 'analysis_raw_data' not in st.session_state:
+    st.session_state.analysis_raw_data = None
 if 'current_archive_name' not in st.session_state:
     st.session_state.current_archive_name = ""
 if 'current_category' not in st.session_state:
@@ -475,6 +477,63 @@ def render_archive_tab(archive_tab_name, title_field, subtitle_fields, body_fiel
                 if st.button("🗑️ Delete this record", key=f"del_{archive_tab_name}_{i}"):
                     st.session_state[confirm_key] = True
                     st.rerun()
+
+# ==============================================================================
+# REFINEMENT FUNCTIONS
+# ==============================================================================
+
+def refine_researcher_output(raw_data, current_output, instruction, venue_name, city, category):
+    """Re-run Gemini on existing research data with a refinement instruction."""
+    system_prompt = """You are a Marketing Researcher for BuyClub, a premium members-only deals platform in Geneva and Lausanne.
+You previously generated a marketing brief. The user wants to refine or update it.
+Maintain all source labels ([Merchant website], [Google], [General Information], [Source Name](url)) on every factual claim.
+Keep the same section structure unless the instruction explicitly asks to change it.
+Output in English only."""
+
+    user_prompt = f"""VENUE: {venue_name}
+CITY: {city}
+CATEGORY: {category}
+
+ORIGINAL RESEARCH DATA:
+{raw_data}
+
+CURRENT BRIEF:
+{current_output}
+
+REFINEMENT INSTRUCTION:
+{instruction}
+
+Update the brief according to the instruction above."""
+
+    try:
+        model = genai.GenerativeModel(model_name='gemini-3.5-flash', system_instruction=system_prompt)
+        return model.generate_content(user_prompt).text
+    except Exception as e:
+        return f"FATAL ERROR: {str(e)}"
+
+def refine_analyzer_output(raw_data, current_output, instruction):
+    """Re-run Gemini on existing analysis data with a refinement instruction."""
+    system_prompt = """You are a strict Compliance Officer for BuyClub.
+You previously generated a compliance analysis report. The user wants to refine or update it.
+Maintain the same scoring and section structure (📊 Executive Summary, 🚨 Critical Issues, ⚠️ Compliance & Quality, 💡 Marketing Opportunities) unless the instruction explicitly says to change it.
+Output in English only. Be clinical and concise."""
+
+    user_prompt = f"""ORIGINAL ANALYSIS DATA:
+{raw_data}
+
+CURRENT REPORT:
+{current_output}
+
+REFINEMENT INSTRUCTION:
+{instruction}
+
+Update the report according to the instruction above."""
+
+    try:
+        model = genai.GenerativeModel(model_name='gemini-3.5-flash', system_instruction=system_prompt)
+        return model.generate_content(user_prompt).text
+    except Exception as e:
+        return f"FATAL ERROR: {str(e)}"
 
 # ==============================================================================
 # UI LAYOUT
@@ -1296,6 +1355,30 @@ RESEARCH DATA:
                     st.session_state.research_raw_data = None
                     st.rerun()
 
+            st.markdown("---")
+            st.markdown("#### ✏️ Refine")
+            r_refine_input = st.text_area(
+                "What would you like to change?",
+                height=80,
+                key="r_refine_input",
+                placeholder="e.g. 'Focus more on clinical backing' · 'Rewrite Key Marketing Points for a luxury audience' · 'Add a section on what makes this venue unique vs competitors'"
+            )
+            if st.button("✏️ Refine Brief", key="r_refine_btn", type="primary", use_container_width=True):
+                if r_refine_input.strip():
+                    with st.spinner("Refining..."):
+                        updated = refine_researcher_output(
+                            st.session_state.get('research_raw_data', ''),
+                            st.session_state.research_result,
+                            r_refine_input.strip(),
+                            st.session_state.research_venue_name,
+                            st.session_state.research_city,
+                            st.session_state.research_category
+                        )
+                    st.session_state.research_result = updated
+                    st.rerun()
+                else:
+                    st.warning("Enter a refinement instruction first.")
+
     # --------------------------------------------------------------------------
     # FEEDBACK LOOP
     # --------------------------------------------------------------------------
@@ -1425,6 +1508,16 @@ with tab2:
                     st.session_state.analysis_result = report
                     st.session_state.current_archive_name = archive_name
                     st.session_state.current_category = category
+                    st.session_state.analysis_raw_data = (
+                        f"[SCRAPED PAGE]\n{scraped_text[:8000]}\n\n"
+                        f"[PREVIOUS PAGE]\n{prev_text[:3000]}\n\n"
+                        f"[CONTRACT]\n{contract_text[:5000]}\n\n"
+                        f"[SEARCH RESULTS]\n{search_results}\n\n"
+                        f"[GENERAL RULES]\n{gen_rules}\n\n"
+                        f"[CATEGORY RULES]\n{cat_rules}\n\n"
+                        f"[FEEDBACK LOG]\n{feed_log}\n\n"
+                        f"[SPECIFIC INSTRUCTIONS]\n{specific_instructions}"
+                    )
 
                     status.update(label="✅ Analysis Complete", state="complete", expanded=False)
 
@@ -1472,6 +1565,27 @@ with tab2:
                     st.session_state.current_archive_name = ""
                     st.session_state.current_category = ""
                     st.rerun()
+
+            st.markdown("---")
+            st.markdown("#### ✏️ Refine")
+            a_refine_input = st.text_area(
+                "What would you like to change?",
+                height=80,
+                key="a_refine_input",
+                placeholder="e.g. 'Focus only on contract mismatches' · 'Explain the score in more detail' · 'Check if the cuisine type is accurate'"
+            )
+            if st.button("✏️ Refine Report", key="a_refine_btn", type="primary", use_container_width=True):
+                if a_refine_input.strip():
+                    with st.spinner("Refining..."):
+                        updated = refine_analyzer_output(
+                            st.session_state.get('analysis_raw_data', ''),
+                            st.session_state.analysis_result,
+                            a_refine_input.strip()
+                        )
+                    st.session_state.analysis_result = updated
+                    st.rerun()
+                else:
+                    st.warning("Enter a refinement instruction first.")
 
     # --------------------------------------------------------------------------
     # FEEDBACK LOOP
