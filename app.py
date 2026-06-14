@@ -206,7 +206,7 @@ def get_rules(sheet_name, category):
 def perform_research(merchant_name, category, city="Geneva", country="Switzerland", treatment_terms=""):
     """Context-Aware Research for Page Analyzer tab."""
     try:
-        banned_domains = ["wanderlog.com", "restaurantguru.com", "sluurpy.com", "top10.com", "trip.com"]
+        banned_domains = get_banned_domains()
         queries = [f"{merchant_name} {city} google reviews official website"]
 
         if category and "Restaurant" in category:
@@ -359,6 +359,24 @@ def save_feedback_rule(sheet_obj, rule_text):
         st.success("✅ Rule learned and saved to Feedback Log.")
     except Exception as e:
         st.error(f"Failed to save rule: {e}")
+
+@st.cache_data(ttl=300)
+def get_banned_domains():
+    """Read banned domains from the Banned_Domains sheet tab. Returns a list of domain strings."""
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
+        client = gspread.authorize(creds)
+        ws = client.open("BuyClub_Page_Analyzer_Brain").worksheet("Banned_Domains")
+        rows = ws.get_all_values()[1:]  # skip header row
+        domains = [r[0].strip() for r in rows if r and r[0].strip()]
+        if DEBUG_MODE:
+            st.info(f"✅ Loaded {len(domains)} banned domains from sheet")
+        return domains
+    except Exception as e:
+        if DEBUG_MODE:
+            st.warning(f"Could not load Banned_Domains sheet: {e}. Using empty list.")
+        return []
 
 @st.cache_data(ttl=60)
 def get_archive_data(archive_tab_name):
