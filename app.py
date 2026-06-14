@@ -170,7 +170,9 @@ def get_rules(sheet_name, category):
         creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
         client = gspread.authorize(creds)
         sheet_obj = client.open(sheet_name)
-    except:
+    except Exception as e:
+        if DEBUG_MODE:
+            st.warning(f"Google Sheets auth failed in get_rules: {e}")
         return "", "", ""
     
     try:
@@ -376,7 +378,9 @@ def get_archive_data(archive_tab_name):
                 record = {headers[i]: (row[i] if i < len(row) else "") for i in range(len(headers))}
                 records.append(record)
         return records, headers
-    except Exception:
+    except Exception as e:
+        if DEBUG_MODE:
+            st.warning(f"Google Sheets load failed in get_archive_data ({archive_tab_name}): {e}")
         return None, None
 
 def delete_archive_record(archive_tab_name, timestamp):
@@ -392,7 +396,9 @@ def delete_archive_record(archive_tab_name, timestamp):
                 ws.delete_rows(i + 1)  # gspread rows are 1-indexed
                 return True
         return False
-    except Exception:
+    except Exception as e:
+        if DEBUG_MODE:
+            st.warning(f"Delete failed in delete_archive_record ({archive_tab_name}): {e}")
         return False
 
 def render_archive_tab(archive_tab_name, title_field, subtitle_fields, body_field, score_field=None):
@@ -1185,7 +1191,7 @@ RESEARCH DATA:
 
             city_aliases = [
                 {"geneva", "geneve", "genf"},
-                {"zurich", "zurich"},
+                {"zurich", "zürich"},
                 {"bern", "berne"},
                 {"basel", "bale"},
                 {"lausanne"},
@@ -1306,7 +1312,7 @@ RESEARCH DATA:
 
         r_act1, r_act2 = st.columns(2)
         with r_act1:
-            if st.button("💾 Save to Research Archive", use_container_width=True):
+            if st.button("💾 Save to Research Archive", use_container_width=True, key="r_save_top", type="primary"):
                 if sh:
                     with st.spinner("Saving..."):
                         archive_research(
@@ -1324,6 +1330,7 @@ RESEARCH DATA:
             if st.button("🗑️ Clear", use_container_width=True, key="r_clear"):
                 st.session_state.research_result = None
                 st.session_state.research_raw_data = None
+                st.rerun()
 
         if st.session_state.research_result:
             st.markdown("---")
@@ -1471,7 +1478,8 @@ with tab2:
                         status.update(label="❌ Scraping Failed", state="error", expanded=False)
                         st.stop()
 
-                    prev_text = scrape_url(prev_url) if prev_url else "N/A"
+                    prev_text_raw = scrape_url(prev_url) if prev_url else "N/A"
+                    prev_text = "N/A" if (not prev_url or prev_text_raw.startswith("Error scraping")) else prev_text_raw
 
                     status.write("📄 Processing Contract Data...")
 
@@ -1530,7 +1538,7 @@ with tab2:
         col_act1, col_act2 = st.columns(2)
 
         with col_act1:
-            if st.button("💾 Save to Archive", use_container_width=True):
+            if st.button("💾 Save to Archive", use_container_width=True, key="a_save_top", type="primary"):
                 if sh:
                     with st.spinner("Saving to Google Sheets..."):
                         archive_report(sh, st.session_state.current_archive_name, st.session_state.current_category, st.session_state.analysis_result)
@@ -1538,10 +1546,11 @@ with tab2:
                     st.error("Cannot save: Google Sheets connection unavailable")
 
         with col_act2:
-            if st.button("🗑️ Trash / Clear", use_container_width=True):
+            if st.button("🗑️ Trash / Clear", use_container_width=True, key="a_clear_top"):
                 st.session_state.analysis_result = None
                 st.session_state.current_archive_name = ""
                 st.session_state.current_category = ""
+                st.rerun()
 
         if st.session_state.analysis_result:
             st.markdown("---")
@@ -1593,8 +1602,8 @@ with tab2:
 
     st.markdown("---")
     with st.expander("🧠 Teach the App (Add to Feedback Log)"):
-        new_rule = st.text_input("Describe the error the AI missed or a new rule:")
-        if st.button("Save Rule"):
+        new_rule = st.text_input("Describe the error the AI missed or a new rule:", key="a_new_rule")
+        if st.button("Save Rule", key="a_save_rule"):
             if new_rule and sh:
                 save_feedback_rule(sh, new_rule)
             elif not sh:
