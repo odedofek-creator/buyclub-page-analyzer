@@ -652,6 +652,39 @@ with tab1:
     # HELPER FUNCTIONS
     # --------------------------------------------------------------------------
 
+    def translate_treatment_terms(treatment_str):
+        """Given treatment terms in any language, return (en_terms list, fr_terms list)."""
+        if not treatment_str.strip():
+            return [], []
+        try:
+            model = genai.GenerativeModel(model_name='gemini-3.5-flash')
+            terms = [t.strip() for t in treatment_str.split(',') if t.strip()]
+            terms_formatted = "\n".join(f"- {t}" for t in terms)
+            response = model.generate_content(
+                f"""You are a bilingual beauty and aesthetics expert.
+For each treatment name below, provide the English name and the French name.
+Reply in this exact format, one line per treatment, nothing else:
+EN: <english name> | FR: <french name>
+
+Treatments:
+{terms_formatted}"""
+            )
+            en_terms, fr_terms = [], []
+            for line in response.text.strip().splitlines():
+                if "EN:" in line and "FR:" in line and "|" in line:
+                    parts = line.split("|")
+                    en = parts[0].replace("EN:", "").strip()
+                    fr = parts[1].replace("FR:", "").strip()
+                    if en:
+                        en_terms.append(en)
+                    if fr:
+                        fr_terms.append(fr)
+            original = [t.strip() for t in treatment_str.split(',') if t.strip()]
+            return en_terms if en_terms else original, fr_terms if fr_terms else original
+        except Exception:
+            original = [t.strip() for t in treatment_str.split(',') if t.strip()]
+            return original, original
+
     def crawl_venue_url(url):
         """Crawl venue homepage + common subpages (contact, about, hours) via Tavily."""
         try:
@@ -813,6 +846,7 @@ PRICING: <pricing information>
 CONTRAINDICATIONS: <who should not do this treatment, any warnings or restrictions>"""
 
             prompt = f"""From the following website content, extract these fields.
+The content may be in French or English — extract based on meaning, not exact text matching.
 Reply in this exact format — one field per line. If a field is not found, write NOT FOUND.
 
 NAME: <business name>
@@ -842,7 +876,7 @@ WEBSITE CONTENT:
         except Exception:
             return {}
 
-    def perform_researcher_research(venue_name, category, city, country, treatment_terms="", venue_url=""):
+    def perform_researcher_research(venue_name, category, city, country, treatment_terms="", venue_url="", en_terms=None, fr_terms=None):
         """Run site:-specific Tavily searches for the Marketing Researcher tab."""
         try:
             from urllib.parse import urlparse
@@ -853,8 +887,13 @@ WEBSITE CONTENT:
                 try:
                     venue_domain = urlparse(venue_url).netloc
                     if treatment_terms:
-                        for term in [t.strip() for t in treatment_terms.split(',')]:
-                            queries.append(f'site:{venue_domain} "{term}"')
+                        # Search venue domain with both FR and EN quoted terms —
+                        # venue website may be in French even if treatment was entered in English
+                        seen_domain_terms = set()
+                        for term in (fr_terms or []) + (en_terms or []) + [t.strip() for t in treatment_terms.split(',')]:
+                            if term not in seen_domain_terms:
+                                seen_domain_terms.add(term)
+                                queries.append(f'site:{venue_domain} "{term}"')
                 except Exception:
                     pass
 
@@ -881,8 +920,9 @@ WEBSITE CONTENT:
 
             elif "High-Tech Aesthetic Treatment" in category:
                 if treatment_terms:
-                    terms = [t.strip() for t in treatment_terms.split(',')]
-                    for term in terms:
+                    # English-language publications/databases — always use English terms
+                    press_terms = en_terms if en_terms else [t.strip() for t in treatment_terms.split(',') if t.strip()]
+                    for term in press_terms:
                         queries += [
                             f'site:elle.com "{term}"',
                             f'site:cosmopolitan.com "{term}"',
@@ -1277,13 +1317,31 @@ RESEARCH DATA:
 
             venue_details = {}
 
+            # Translate treatment terms to EN + FR so we can search correctly
+            # regardless of which language the user typed, and regardless of
+            # whether the venue website or press source is in French or English.
+            en_terms, fr_terms = [], []
+            if r_treatments and ("High-Tech" in r_category or "Simple Beauty" in r_category):
+                r_status.write("🌐 Preparing bilingual search terms...")
+                en_terms, fr_terms = translate_treatment_terms(r_treatments)
+
+            # Build a bilingual treatment hint so Gemini can find the treatment
+            # on a French website even if the user typed the name in English (or vice versa)
+            if en_terms and fr_terms:
+                treatment_for_crawl = (
+                    r_treatments +
+                    f" (English: {', '.join(en_terms)} / French: {', '.join(fr_terms)})"
+                )
+            else:
+                treatment_for_crawl = r_treatments
+
             # URL-first: crawl and extract name/city + full details if URL provided
             if r_venue_url:
                 r_status.write("🌐 Crawling venue website...")
                 crawl_content = crawl_venue_url(r_venue_url)
                 if crawl_content:
                     r_status.write("🔍 Extracting venue details from website...")
-                    venue_details = extract_venue_details_from_crawl(crawl_content, r_category, r_treatments)
+                    venue_details = extract_venue_details_from_crawl(crawl_content, r_category, treatment_for_crawl)
                     extracted_name = venue_details.get("NAME", "NOT FOUND")
                     extracted_city = venue_details.get("CITY", "NOT FOUND")
 
@@ -1353,7 +1411,8 @@ RESEARCH DATA:
                 r_status.write("⚠️ Google Places: no match found. The venue may not have a Google listing, or the name may differ on Google Maps.")
 
             tavily_data = perform_researcher_research(
-                resolved_name, r_category, resolved_city, r_country, r_treatments, r_venue_url
+                resolved_name, r_category, resolved_city, r_country, r_treatments, r_venue_url,
+                en_terms=en_terms, fr_terms=fr_terms
             )
             research_data = venue_details_block + google_block + tavily_data
 
