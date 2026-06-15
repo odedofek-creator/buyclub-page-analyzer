@@ -488,7 +488,11 @@ def render_archive_tab(archive_tab_name, title_field, subtitle_fields, body_fiel
     for i, rec in enumerate(shown):
         title = rec.get(title_field, "Untitled")
         ts = rec.get("Timestamp", "")
-        date = ts[:10]
+        try:
+            dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+            date = dt.strftime("%A, %B ") + str(dt.day) + dt.strftime(", %Y %H:%M")
+        except Exception:
+            date = ts[:10]
 
         parts = []
         for field in subtitle_fields:
@@ -758,7 +762,7 @@ with tab1:
             details_url = "https://maps.googleapis.com/maps/api/place/details/json"
             r2 = requests.get(details_url, params={
                 "place_id": place_id,
-                "fields": "name,rating,user_ratings_total,reviews,address_components,vicinity",
+                "fields": "name,rating,user_ratings_total,reviews,address_components,vicinity,formatted_phone_number,international_phone_number",
                 "key": places_key
             }, timeout=10)
             r2.raise_for_status()
@@ -779,7 +783,8 @@ with tab1:
                 "rating": result.get("rating"),
                 "count": result.get("user_ratings_total"),
                 "snippets": snippets,
-                "neighborhood": neighborhood
+                "neighborhood": neighborhood,
+                "phone": result.get("formatted_phone_number") or result.get("international_phone_number")
             }
         except Exception:
             return None
@@ -983,6 +988,7 @@ OUTPUT STRUCTURE (use these exact section headers):
 ## Venue Details
 Include (from the VENUE WEBSITE structured extraction in the research data):
 Neighborhood | Address | Phone | Opening Hours | Facebook | Instagram | Date Opened | Terrace
+For Phone: use the website extraction first; if not found there, check "PHONE (from Google)" in the Google data and label it [Google].
 For Facebook and Instagram: check both the VENUE WEBSITE extraction AND any INSTAGRAM PROFILE or FACEBOOK PROFILE sources in the research data. Use whichever URL is found. Format as clickable markdown: [Facebook](url) and [Instagram](url).
 List ALL fields. For each field: show the value if found, or write "Not found." if not. Do not move these to the bottom "Not Found" section — handle them here inline.
 
@@ -1011,6 +1017,7 @@ OUTPUT STRUCTURE (use these exact section headers):
 ## Venue Details
 Include (from the VENUE WEBSITE structured extraction in the research data):
 Neighborhood | Address | Phone | Opening Hours | Facebook | Instagram | Date Opened
+For Phone: use the website extraction first; if not found there, check "PHONE (from Google)" in the Google data and label it [Google].
 For Facebook and Instagram: check both the VENUE WEBSITE extraction AND any INSTAGRAM PROFILE or FACEBOOK PROFILE sources in the research data. Use whichever URL is found. Format as clickable markdown: [Facebook](url) and [Instagram](url).
 List ALL fields. For each field: show the value if found, or write "Not found." if not. Do not move these to the bottom "Not Found" section — handle them here inline.
 
@@ -1039,6 +1046,7 @@ OUTPUT STRUCTURE (use these exact section headers):
 ## Venue Details
 Include (from the VENUE WEBSITE structured extraction in the research data):
 Neighborhood | Address | Phone | Opening Hours | Facebook | Instagram | Date Opened
+For Phone: use the website extraction first; if not found there, check "PHONE (from Google)" in the Google data and label it [Google].
 For Facebook and Instagram: check both the VENUE WEBSITE extraction AND any INSTAGRAM PROFILE or FACEBOOK PROFILE sources in the research data. Use whichever URL is found. Format as clickable markdown: [Facebook](url) and [Instagram](url).
 List ALL fields. For each field: show the value if found, or write "Not found." if not. Do not move these to the bottom "Not Found" section — handle them here inline.
 
@@ -1047,7 +1055,7 @@ Brand story / marketing pitch, practitioner credentials. Sourced from venue webs
 
 ## Treatment
 Description, benefits, pricing, and contraindications from the venue website. Label each item as "From venue website."
-If any sub-item is not found, say so within this section.
+If any sub-item is not found on the venue website, provide a useful explanation from your own training knowledge about the treatment, clearly labeled as [General Information]. Never just write "Not found." — always give the copywriter something useful to work with.
 
 ## Clinical & Scientific Backing
 PubMed, FDA, WHO sources only. Every claim linked to source. Beauty clinic websites are not accepted here.
@@ -1074,6 +1082,7 @@ OUTPUT STRUCTURE (use these exact section headers):
 ## Venue Details
 Include (from the VENUE WEBSITE structured extraction in the research data):
 Neighborhood | Address | Phone | Opening Hours | Facebook | Instagram | Date Opened
+For Phone: use the website extraction first; if not found there, check "PHONE (from Google)" in the Google data and label it [Google].
 For Facebook and Instagram: check both the VENUE WEBSITE extraction AND any INSTAGRAM PROFILE or FACEBOOK PROFILE sources in the research data. Use whichever URL is found. Format as clickable markdown: [Facebook](url) and [Instagram](url).
 List ALL fields. For each field: show the value if found, or write "Not found." if not.
 
@@ -1097,7 +1106,7 @@ SOURCE LABELING — MANDATORY ON EVERY PIECE OF INFORMATION:
 Every single item in the output must be labeled with where it came from. No exceptions.
 Use one of these labels, inline before or after the fact:
 - `[Merchant website]` — info extracted from the venue's own website crawl
-- `[Google]` — data from Google Places API (rating, review count, neighborhood, review snippets)
+- `[Google]` — data from Google Places API (rating, review count, phone, neighborhood, review snippets)
 - `[General Information]` — your own training knowledge, not from any search result. No URL needed but must be clearly labeled.
 - For all other sources: include a clickable markdown link: [Source Name](full URL)
 
@@ -1332,6 +1341,8 @@ RESEARCH DATA:
                     f"SOURCE: GOOGLE (Places API — verified)\nURL: {maps_url}\n"
                     f"RATING: {google_data['rating']} stars ({google_data.get('count', 'N/A')} Google reviews)\n"
                 )
+                if google_data.get("phone"):
+                    google_block += f"PHONE (from Google): {google_data['phone']}\n"
                 if google_data.get("neighborhood"):
                     google_block += f"NEIGHBORHOOD (from Google): {google_data['neighborhood']}\n"
                 if google_data.get("snippets"):
