@@ -176,13 +176,13 @@ def get_rules(sheet_name, category):
         return "", "", ""
     
     try:
-        ws_gen = sheet_obj.worksheet("General_Rules")
-        gen_rules = "\n".join([r[0] for r in ws_gen.get_all_values() if r])
+        ws_gen = sheet_obj.worksheet("Analyzer_General_Rules")
+        gen_rules = "\n".join([r[0] for r in ws_gen.get_all_values()[1:] if r and r[0].strip()])
 
         ws_cat = sheet_obj.worksheet("Category_Rules")
         cat_data = ws_cat.get_all_values()
         headers = cat_data[0]
-        
+
         cat_rules_text = ""
         if category in headers:
             col_index = headers.index(category)
@@ -191,8 +191,11 @@ def get_rules(sheet_name, category):
         else:
             cat_rules_text = "No specific rules found for this category."
 
-        ws_feed = sheet_obj.worksheet("Feedback_Log")
-        feed_rules = "\n".join([r[0] for r in ws_feed.get_all_values()[1:] if r and r[0].strip()])
+        ws_feed = sheet_obj.worksheet("Analyzer_Feedback_Log")
+        feed_rules = "\n".join([
+            r[0] for r in ws_feed.get_all_values()[1:]
+            if r and r[0].strip() and (len(r) < 3 or r[2].strip() == "" or r[2].strip().upper() == "TRUE")
+        ])
 
         if DEBUG_MODE:
             st.info(f"✅ Loaded {len(gen_rules)} chars of general rules, {len(cat_rules_text)} chars of category rules")
@@ -354,9 +357,17 @@ def archive_report(sheet_obj, deal_name, category, report_text):
 
 def save_feedback_rule(sheet_obj, rule_text):
     try:
-        ws = sheet_obj.worksheet("Feedback_Log")
-        ws.append_row([rule_text, datetime.now().strftime("%Y-%m-%d")])
-        st.success("✅ Rule learned and saved to Feedback Log.")
+        ws = sheet_obj.worksheet("Analyzer_Feedback_Log")
+        ws.append_row([rule_text, datetime.now().strftime("%Y-%m-%d"), "TRUE"])
+        st.success("✅ Rule saved to Analyzer Feedback Log.")
+    except Exception as e:
+        st.error(f"Failed to save rule: {e}")
+
+def save_research_feedback_rule(sheet_obj, rule_text):
+    try:
+        ws = sheet_obj.worksheet("Research_Feedback_Log")
+        ws.append_row([rule_text, datetime.now().strftime("%Y-%m-%d"), "TRUE"])
+        st.success("✅ Rule saved to Research Feedback Log.")
     except Exception as e:
         st.error(f"Failed to save rule: {e}")
 
@@ -377,6 +388,33 @@ def get_banned_domains():
         if DEBUG_MODE:
             st.warning(f"Could not load Banned_Domains sheet: {e}. Using empty list.")
         return []
+
+@st.cache_data(ttl=300)
+def get_research_rules():
+    """Fetch Research_General_Rules and Research_Feedback_Log (Active=TRUE only). Returns (gen_rules, feedback_rules)."""
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
+        client = gspread.authorize(creds)
+        sheet_obj = client.open("BuyClub_Page_Analyzer_Brain")
+
+        ws_gen = sheet_obj.worksheet("Research_General_Rules")
+        gen_rules = "\n".join([r[0] for r in ws_gen.get_all_values()[1:] if r and r[0].strip()])
+
+        ws_feed = sheet_obj.worksheet("Research_Feedback_Log")
+        feedback_rules = "\n".join([
+            r[0] for r in ws_feed.get_all_values()[1:]
+            if r and r[0].strip() and (len(r) < 3 or r[2].strip() == "" or r[2].strip().upper() == "TRUE")
+        ])
+
+        if DEBUG_MODE:
+            st.info(f"✅ Research rules loaded: {len(gen_rules)} chars general, {len(feedback_rules)} chars feedback")
+
+        return gen_rules, feedback_rules
+    except Exception as e:
+        if DEBUG_MODE:
+            st.warning(f"Could not load research rules: {e}")
+        return "", ""
 
 @st.cache_data(ttl=60)
 def get_archive_data(archive_tab_name):
@@ -932,7 +970,7 @@ WEBSITE CONTENT:
         except Exception as e:
             return f"Search failed: {e}"
 
-    def run_researcher_gemini(venue_name, city, country, category, treatment_terms, special_instructions, research_data, gen_rules):
+    def run_researcher_gemini(venue_name, city, country, category, treatment_terms, special_instructions, research_data, gen_rules, feedback_rules=""):
         """Run Gemini in Marketing Researcher persona and return structured brief."""
 
         if "Restaurant" in category:
@@ -1082,8 +1120,9 @@ CATEGORY: {category}
 {"TREATMENT(S): " + treatment_terms if treatment_terms else ""}
 {"SPECIAL INSTRUCTIONS: " + special_instructions if special_instructions else ""}
 
-GENERAL RULES FROM SHEET:
+GENERAL RULES:
 {gen_rules}
+{"FEEDBACK RULES:" + chr(10) + feedback_rules if feedback_rules else ""}
 
 RESEARCH DATA:
 {research_data}
@@ -1257,7 +1296,7 @@ RESEARCH DATA:
                 st.stop()
 
             r_status.write(f"🕵️ Researching '{resolved_name}' in {resolved_city}...")
-            gen_rules_r, _, _ = get_rules("BuyClub_Page_Analyzer_Brain", r_category)
+            gen_rules_r, feedback_rules_r = get_research_rules()
 
             # Build structured venue details block from crawl extraction
             venue_details_block = ""
@@ -1307,7 +1346,7 @@ RESEARCH DATA:
             r_status.write("🤖 Building marketing brief...")
             brief = run_researcher_gemini(
                 resolved_name, resolved_city, r_country, r_category,
-                r_treatments, r_special, research_data, gen_rules_r
+                r_treatments, r_special, research_data, gen_rules_r, feedback_rules_r
             )
 
             st.session_state.research_result = brief
@@ -1409,11 +1448,11 @@ RESEARCH DATA:
     # --------------------------------------------------------------------------
 
     st.markdown("---")
-    with st.expander("🧠 Teach the App (Add to Feedback Log)"):
+    with st.expander("🧠 Teach the App (Add to Research Feedback Log)"):
         r_new_rule = st.text_input("Describe a rule or correction:", key="r_new_rule")
         if st.button("Save Rule", key="r_save_rule"):
             if r_new_rule and sh:
-                save_feedback_rule(sh, r_new_rule)
+                save_research_feedback_rule(sh, r_new_rule)
             elif not sh:
                 st.error("Database not connected.")
 
