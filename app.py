@@ -911,6 +911,7 @@ WEBSITE CONTENT:
                 except Exception:
                     continue
 
+            banned_domains = get_banned_domains()
             context_data = []
             seen_urls = set()
             for result in all_results:
@@ -921,6 +922,8 @@ WEBSITE CONTENT:
                 if url in seen_urls:
                     continue
                 seen_urls.add(url)
+                if any(bad in domain for bad in banned_domains):
+                    continue
 
                 # Check if this result is from the venue's own domain
                 venue_domain_check = ""
