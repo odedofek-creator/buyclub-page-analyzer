@@ -7,7 +7,8 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import PyPDF2
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
+import extra_streamlit_components as stx
 import io
 import re
 import time
@@ -22,12 +23,20 @@ st.set_page_config(page_title="BuyClub Page Analyzer", layout="wide", page_icon=
 # Debug mode (set DEBUG_MODE=true in secrets to enable)
 DEBUG_MODE = st.secrets.get("DEBUG_MODE", "false").lower() == "true"
 
+# Cookie manager — must be instantiated once at top level
+cookie_manager = stx.CookieManager(key="bc_cookie_manager")
+
 # --- PASSWORD PROTECTION START ---
 def check_password():
-    """Returns `True` if the user had the correct password."""
+    """Returns True if the user is authenticated via cookie or correct password."""
 
     if "password_correct" not in st.session_state:
         st.session_state.password_correct = False
+
+    # Check persistent cookie first — skip login if already authenticated
+    if not st.session_state.password_correct:
+        if cookie_manager.get(cookie="bc_auth") == "authenticated":
+            st.session_state.password_correct = True
 
     if st.session_state.password_correct:
         return True
@@ -40,7 +49,12 @@ def check_password():
     if submit_button:
         if password_input == st.secrets["APP_PASSWORD"]:
             st.session_state.password_correct = True
-            st.rerun() 
+            cookie_manager.set(
+                "bc_auth",
+                "authenticated",
+                expires_at=datetime.now() + timedelta(days=30)
+            )
+            st.rerun()
         else:
             st.error("😕 Password incorrect")
             time.sleep(1)
