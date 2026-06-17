@@ -866,6 +866,16 @@ TREATMENT_DESCRIPTION: <description of the treatment(s) offered{treatment_hint}>
 TREATMENT_BENEFITS: <benefits listed on the website for this treatment>
 PRICING: <pricing information>
 CONTRAINDICATIONS: <who should not do this treatment, any warnings or restrictions>"""
+            elif "Hotel" in category:
+                category_fields = """
+STAR_RATING: <official star classification e.g. "5*" or "4-star">
+ROOM_COUNT: <total number of rooms or suites>
+ROOM_TYPES: <types of rooms available e.g. "Classic Room, Superior Room, Junior Suite">
+SPA_SIZE: <spa or wellness area size in m² if mentioned>
+SPA_FACILITIES: <list of spa/wellness facilities: indoor pool, outdoor pool, hammam, sauna, steam room, fitness, etc.>
+DINING: <restaurant name(s), cuisine type, and any awards or descriptions>
+YEAR_OPENED: <year the hotel opened or was founded>
+COLLECTION_MEMBERSHIP: <Relais & Châteaux / Leading Hotels of the World / Design Hotels / Swiss Deluxe Hotels — if mentioned>"""
 
             prompt = f"""From the following website content, extract these fields.
 The content may be in French or English — extract based on meaning, not exact text matching.
@@ -970,6 +980,30 @@ WEBSITE CONTENT:
                 else:
                     queries.append(f'site:letemps.ch OR site:lematin.ch OR site:tdg.ch OR site:20min.ch "{venue_name}"')
 
+            elif "Hotel" in category:
+                queries += [
+                    f'site:booking.com "{venue_name}"',
+                    f'site:hotels.com "{venue_name}"',
+                    f'site:tripadvisor.com "{venue_name}"',
+                    f'site:relaischateaux.com "{venue_name}"',
+                    f'site:lhw.com "{venue_name}"',
+                    f'site:designhotels.com "{venue_name}"',
+                    f'site:swissdeluxehotels.com "{venue_name}"',
+                    f'site:cntraveler.com "{venue_name}"',
+                ]
+                if country == "France":
+                    queries += [
+                        f'site:guide.michelin.com/fr "{venue_name}"',
+                        f'site:gaultmillau.fr "{venue_name}"',
+                        f'site:lefigaro.fr OR site:lemonde.fr OR site:20minutes.fr "{venue_name}"',
+                    ]
+                else:
+                    queries += [
+                        f'site:guide.michelin.com/ch/fr "{venue_name}"',
+                        f'site:gaultmillau.ch "{venue_name}"',
+                        f'site:letemps.ch OR site:lematin.ch OR site:tdg.ch OR site:20min.ch "{venue_name}"',
+                    ]
+
             all_results = []
             for q in queries:
                 try:
@@ -1009,6 +1043,20 @@ WEBSITE CONTENT:
                     source_label = "GAULT MILLAU"
                 elif "tripadvisor" in domain:
                     source_label = "TRIPADVISOR"
+                elif "booking.com" in domain:
+                    source_label = "BOOKING.COM"
+                elif "hotels.com" in domain:
+                    source_label = "HOTELS.COM"
+                elif "relaischateaux.com" in domain:
+                    source_label = "RELAIS & CHÂTEAUX"
+                elif "lhw.com" in domain:
+                    source_label = "LEADING HOTELS OF THE WORLD"
+                elif "designhotels.com" in domain:
+                    source_label = "DESIGN HOTELS"
+                elif "swissdeluxehotels.com" in domain:
+                    source_label = "SWISS DELUXE HOTELS"
+                elif "cntraveler.com" in domain:
+                    source_label = "CONDÉ NAST TRAVELER"
                 elif "genevetourism" in domain or "lausanne-tourisme" in domain:
                     source_label = "TOURISM BOARD"
                 elif any(d in domain for d in ["letemps", "lematin", "20min", "tdg.ch", "lefigaro", "lemonde", "20minutes.fr"]):
@@ -1136,6 +1184,48 @@ Copywriter-ready claims. Clinical claims only from verified scientific sources.
 
 ## Not Found
 List each specific thing that was searched for but not found.
+"""
+        elif "Hotel" in category:
+            output_structure = """
+OUTPUT STRUCTURE (use these exact section headers):
+
+## Venue Details
+Include (from the VENUE WEBSITE structured extraction in the research data):
+Address | Phone | Check-in / Check-out Hours | Facebook | Instagram | Year Opened | Star Rating | Room Count | Collection Membership
+For Phone: use the website extraction first; if not found there, check "PHONE (from Google)" in the Google data and label it [Google].
+For Facebook and Instagram: check both the VENUE WEBSITE extraction AND any INSTAGRAM PROFILE or FACEBOOK PROFILE sources in the research data. Use whichever URL is found. Format as clickable markdown: [Facebook](url) and [Instagram](url).
+List ALL fields. For each field: show the value if found, or write "Not found." if not. Do not move these to the bottom "Not Found" section — handle them here inline.
+
+## About the Hotel
+Hotel concept, history, brand story, unique selling proposition. Sourced from venue website.
+
+## Rooms
+Room types, sizes in m² where available, notable features (balcony, mountain view, lake view, etc.). From venue website. If sizes not found, write "Not found."
+
+## Spa & Wellness
+Spa name, size in m², full list of facilities (indoor pool, outdoor pool, hammam, sauna, steam room, fitness center, etc.). From venue website. If no spa, write "Not found."
+
+## Dining
+Restaurant name(s), cuisine type, any Michelin or Gault&Millau recognition. From venue website and Michelin/Gault&Millau sources. Label each item with its source.
+
+## Ratings & Awards
+- Booking.com: score (e.g. 9.4) and rating label (e.g. "Exceptional") [BOOKING.COM]
+- Hotels.com: score and rating label [HOTELS.COM]
+- TripAdvisor: Travellers' Choice, Best of the Best, or Certificate of Excellence [TRIPADVISOR]
+- Google: rating and review count [Google]
+All ratings must be cited from their respective source. If a platform wasn't found, note it here.
+
+## Collection Memberships & Press
+Relais & Châteaux, Leading Hotels of the World, Design Hotels, Swiss Deluxe Hotels membership — with clickable links.
+Condé Nast Traveler coverage — quoted with clickable link.
+Swiss or French press mentions — quoted with clickable links.
+If none found for a specific source, note it.
+
+## Key Marketing Points
+Copywriter-ready bullet points: strongest award or rating credential, unique features (spa, architecture, setting), distance from Geneva and/or Lausanne, seasonal angle if relevant. All factual claims linked to source.
+
+## Not Found
+List each external source searched but not found (e.g. "Relais & Châteaux: not found", "LHW: not found", "Design Hotels: not found", "Swiss Deluxe Hotels: not found", "Condé Nast Traveler: not found", "Michelin: not found", "Gault&Millau: not found", "Swiss press: not found").
 """
         else:
             output_structure = """
@@ -1420,6 +1510,10 @@ RESEARCH DATA:
                     "TREATMENT_DESCRIPTION": "Treatment Description",
                     "TREATMENT_BENEFITS": "Treatment Benefits",
                     "PRICING": "Pricing", "CONTRAINDICATIONS": "Contraindications",
+                    "STAR_RATING": "Star Rating", "ROOM_COUNT": "Room Count",
+                    "ROOM_TYPES": "Room Types", "SPA_SIZE": "Spa Size",
+                    "SPA_FACILITIES": "Spa Facilities", "DINING": "Dining",
+                    "YEAR_OPENED": "Year Opened", "COLLECTION_MEMBERSHIP": "Collection Membership",
                 }
                 lines = [f"SOURCE: VENUE WEBSITE (structured extraction)\nURL: {r_venue_url}"]
                 for key, label in field_labels.items():
