@@ -1113,16 +1113,31 @@ Concept, cuisine type, brand story / marketing pitch. Sourced from venue website
 Notable or signature dishes from the website. If none found, write "Not found."
 
 ## Ratings & Awards
-Google rating (verified via Places API), TripAdvisor, Michelin, Gault Millau, Tourism Board awards.
+Use this exact order and these exact sub-headers:
+
+**Google Rating:** [X] stars ([N] Google reviews) [Google]. If not found, write "Not found."
+
+**Awards:** Any competition wins, chef awards, or recognition outside the Michelin/Gault&Millau guides (e.g. world championships, national competitions). With source link. If none found, write "Not found."
+
+**Gault&Millau Mentions / Articles:** Any editorial articles, features, or coverage in Gault&Millau publications. Quote the key line and include a clickable link. If none found, write "Not found."
+
+**Gault&Millau Points:** Official points rating (e.g. "14/20") if the restaurant has been rated. If no official rating exists (only editorial coverage), write "Not rated." Do NOT confuse editorial mentions with an official points score — they are different.
+
+**Michelin Mentions:** Any appearance in the Michelin Guide — including Bib Gourmand, Recommended listing, or editorial mention. Quote and include a clickable link. If none found, write "Not found."
+
+**Michelin Rating / Stars:** Confirmed star rating only (1★, 2★★, or 3★★★). If in the guide but not starred, write "Listed in guide — not starred." If not found in the guide at all, write "Not found."
+
+**TripAdvisor Rating:** Travellers' Choice award, Certificate of Excellence, or numerical rating with review count. With source link. If none found, write "Not found."
 
 ## Press Mentions
 Swiss or French press coverage of the venue. Quoted with clickable links.
 
 ## Key Marketing Points
 Copywriter-ready claims. All factual claims linked to source.
+If the restaurant has any Michelin or Gault&Millau recognition (mentions, rating, or stars), that MUST be the first bullet point — it is the strongest credential for BuyClub's audience.
 
 ## Not Found
-List each specific thing that was searched for but not found (e.g. "Michelin: not found", "Gault Millau: not found", "TripAdvisor: not found", "Press coverage: not found", "Neighborhood: not found", etc.)
+List each specific thing that was searched for but not found (e.g. "Michelin: not found", "Gault&Millau: not found", "TripAdvisor: not found", "Press coverage: not found", "Neighborhood: not found", etc.)
 """
         elif "Simple Beauty Treatment" in category:
             output_structure = """
