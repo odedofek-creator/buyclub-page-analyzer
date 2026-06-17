@@ -1359,8 +1359,21 @@ RESEARCH DATA:
                 else:
                     r_status.write("⚠️ Could not crawl venue URL — using manually entered details.")
 
+            if not resolved_name and r_venue_url:
+                # Website crawled but Gemini couldn't find the name (JS-heavy site, logo-only header, etc.)
+                # Derive a candidate name from the domain as a fallback
+                try:
+                    from urllib.parse import urlparse
+                    domain = urlparse(r_venue_url).netloc.replace("www.", "")
+                    name_candidate = domain.rsplit(".", 1)[0].replace("-", " ").replace("_", " ").title()
+                    if name_candidate:
+                        resolved_name = name_candidate
+                        st.warning(f"⚠️ Could not extract venue name from website content. Using URL-derived name: **\"{resolved_name}\"**. If this is wrong, enter the correct name in the Venue Name field and run again.")
+                except Exception:
+                    pass
+
             if not resolved_name:
-                st.error("Could not determine venue name from URL. Please enter it manually.")
+                st.error("Could not determine venue name. Please enter it manually in the Venue Name field.")
                 r_status.update(label="❌ Missing venue name", state="error", expanded=False)
                 st.session_state.researcher_running = False
                 st.stop()
