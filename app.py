@@ -661,8 +661,10 @@ with tab1:
             terms = [t.strip() for t in treatment_str.split(',') if t.strip()]
             terms_formatted = "\n".join(f"- {t}" for t in terms)
             response = model.generate_content(
-                f"""You are a bilingual beauty and aesthetics expert.
-For each treatment name below, provide the English name and the French name.
+                f"""You are a bilingual beauty and aesthetics terminology translator.
+For each treatment name below, provide the English and French translation.
+CRITICAL: Translate the term as written. Do NOT substitute a different technology, brand name, or synonym.
+Example: "Cryosculpting" stays "Cryosculpting" in English and "Cryosculpting" in French — not "Cryolipolysis" or "CoolSculpting".
 Reply in this exact format, one line per treatment, nothing else:
 EN: <english name> | FR: <french name>
 
@@ -897,9 +899,9 @@ WEBSITE CONTENT:
                 except Exception:
                     pass
 
-            # Find Instagram and Facebook profiles for this venue (even if not linked on website)
-            queries.append(f'site:instagram.com "{venue_name}"')
-            queries.append(f'site:facebook.com "{venue_name}"')
+            # Find Instagram and Facebook profiles — include city to avoid unrelated businesses with same name
+            queries.append(f'site:instagram.com "{venue_name}" {city}')
+            queries.append(f'site:facebook.com "{venue_name}" {city}')
 
             if "Restaurant" in category:
                 if country == "France":
@@ -1155,6 +1157,8 @@ ADDITIONAL RULES:
 - Clinical/scientific claims: only PubMed, FDA, WHO, ANSM, or government health agencies qualify. Beauty clinic websites, influencer articles, and commercial sites do NOT count as scientific backing — move them to General Information if useful, or omit.
 - Do not hallucinate. If a claim doesn't appear in the research data and isn't from your training knowledge, do not include it.
 - Ignore low-authority sources: personal blogs, forum posts, aggregators.
+- Treatment name accuracy: Use the treatment name EXACTLY as provided in the TREATMENT(S) field. Do NOT rename it, substitute synonyms, or replace it with a related technology. If the user says "Cryosculpting", write "Cryosculpting" throughout — not "Cryolipolysis" or "CoolSculpting".
+- Similar technologies: If the specified treatment appears to be very similar to or possibly the same as a different well-known treatment or technology, add a clearly visible note at the top of the Treatment section: "⚠️ Note: '[treatment name]' as provided appears to be closely related to or possibly the same technology as '[known technology]'. If these are intended to be different treatments, the information below may not accurately reflect the distinction." Then describe the treatment as provided, using what is known about it.
 
 OUTPUT RULES:
 - If a section has no findings, write "Not found." under that header — do not skip it.
@@ -1316,6 +1320,7 @@ RESEARCH DATA:
                 return False
 
             venue_details = {}
+            website_warning = None  # Set to a string if website retrieval had issues
 
             # Translate treatment terms to EN + FR so we can search correctly
             # regardless of which language the user typed, and regardless of
@@ -1357,6 +1362,7 @@ RESEARCH DATA:
                     if not r_city.strip() and extracted_city != "NOT FOUND":
                         resolved_city = extracted_city
                 else:
+                    website_warning = f"⚠️ **Website not accessible:** Tavily was unable to retrieve content from `{r_venue_url}`. Either the URL is wrong, or the website requires JavaScript to load. All venue details below are sourced from Google and external sources — not from the merchant's own website."
                     r_status.write("⚠️ Could not crawl venue URL — using manually entered details.")
 
             if not resolved_name and r_venue_url:
@@ -1368,7 +1374,8 @@ RESEARCH DATA:
                     name_candidate = domain.rsplit(".", 1)[0].replace("-", " ").replace("_", " ").title()
                     if name_candidate:
                         resolved_name = name_candidate
-                        st.warning(f"⚠️ Could not extract venue name from website content. Using URL-derived name: **\"{resolved_name}\"**. If this is wrong, enter the correct name in the Venue Name field and run again.")
+                        website_warning = f"⚠️ **Venue name not found on website:** Tavily couldn't find the venue name on `{r_venue_url}`, so it's using the name derived from the URL: **\"{resolved_name}\"**. If this is wrong, enter the correct name in the Venue Name field and run again."
+                        st.warning(website_warning)
                 except Exception:
                     pass
 
@@ -1434,6 +1441,9 @@ RESEARCH DATA:
                 resolved_name, resolved_city, r_country, r_category,
                 r_treatments, r_special, research_data, gen_rules_r, feedback_rules_r
             )
+
+            if website_warning:
+                brief = website_warning + "\n\n---\n\n" + brief
 
             st.session_state.research_result = brief
             st.session_state.research_raw_data = research_data
