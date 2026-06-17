@@ -668,6 +668,13 @@ with tab1:
     if 'last_research_time' not in st.session_state:
         st.session_state.last_research_time = 0
 
+    # Watchdog: auto-reset if stuck in running state for > 3 minutes
+    # Handles crashes, Gemini/Tavily hangs, and Streamlit reconnects
+    if (st.session_state.researcher_running
+            and not st.session_state.run_research_pending
+            and time.time() - st.session_state.last_research_time > 180):
+        st.session_state.researcher_running = False
+
     # --------------------------------------------------------------------------
     # HELPER FUNCTIONS
     # --------------------------------------------------------------------------
@@ -724,10 +731,7 @@ Treatments:
             subpage_candidates = [
                 f"{base}/contact",
                 f"{base}/a-propos",
-                f"{base}/about",
                 f"{base}/horaires",
-                f"{base}/nous-contacter",
-                f"{base}/contact-us",
             ]
             subpage_content = ""
             try:
@@ -895,7 +899,7 @@ STORY: <2-3 sentence brand story, mission, or marketing pitch from the About sec
 WEBSITE CONTENT:
 {crawl_content[:12000]}"""
 
-            response = model.generate_content(prompt)
+            response = model.generate_content(prompt, request_options={"timeout": 60})
             result = {}
             for line in response.text.strip().splitlines():
                 if ":" in line:
@@ -1296,7 +1300,7 @@ RESEARCH DATA:
 
         try:
             model = genai.GenerativeModel(model_name='gemini-3.5-flash', system_instruction=system_prompt)
-            response = model.generate_content(user_prompt)
+            response = model.generate_content(user_prompt, request_options={"timeout": 60})
             return response.text
         except Exception as e:
             return f"FATAL ERROR: {str(e)}"
