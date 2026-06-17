@@ -13,6 +13,7 @@ import io
 import re
 import time
 from PIL import Image
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 # ==============================================================================
 # CONFIGURATION & SETUP
@@ -32,6 +33,12 @@ def check_password():
 
     if "password_correct" not in st.session_state:
         st.session_state.password_correct = False
+
+    # CookieManager needs one browser round-trip before it can return cookie values.
+    # Force a single rerun on first load so the component initialises before we check.
+    if not st.session_state.get("_cookie_init_done"):
+        st.session_state._cookie_init_done = True
+        st.rerun()
 
     # Check persistent cookie first — skip login if already authenticated
     if not st.session_state.password_correct:
@@ -630,8 +637,25 @@ div.stButton > button[kind="primary"] {
 </style>
 """, unsafe_allow_html=True)
 
-with st.sidebar:
-    if st.button("🚪 Logout"):
+# Top-right action buttons — sit at same visual level as the tab bar
+_spacer, _col_new, _col_logout = st.columns([6, 1, 1])
+with _col_new:
+    if st.button("🔄 New Search", use_container_width=True, key="global_new_search"):
+        for _k in ["r_deal_name", "r_venue_url", "r_venue_name", "r_city",
+                   "r_treatments", "r_special", "r_category", "r_country"]:
+            st.session_state.pop(_k, None)
+        st.session_state.research_result = None
+        st.session_state.research_raw_data = None
+        st.session_state.research_archive_name = ""
+        st.session_state.research_category = ""
+        st.session_state.research_venue_name = ""
+        st.session_state.research_city = ""
+        st.session_state.research_country = ""
+        st.session_state.researcher_running = False
+        st.session_state.run_research_pending = False
+        st.rerun()
+with _col_logout:
+    if st.button("🚪 Logout", use_container_width=True, key="global_logout"):
         cookie_manager.delete("bc_auth")
         st.session_state.password_correct = False
         st.rerun()
@@ -714,6 +738,17 @@ Treatments:
             original = [t.strip() for t in treatment_str.split(',') if t.strip()]
             return original, original
 
+    def _tavily_extract(urls, timeout=25):
+        """Tavily extract with a hard thread timeout. Returns None on timeout or error."""
+        try:
+            with ThreadPoolExecutor(max_workers=1) as _ex:
+                _fut = _ex.submit(tavily.extract, urls=urls)
+                return _fut.result(timeout=timeout)
+        except FuturesTimeoutError:
+            return None
+        except Exception:
+            return None
+
     def crawl_venue_url(url):
         """Crawl venue homepage + common subpages (contact, about, hours) via Tavily."""
         try:
@@ -721,8 +756,8 @@ Treatments:
             parsed = urlparse(url)
             base = f"{parsed.scheme}://{parsed.netloc}"
 
-            # Crawl homepage first
-            homepage_response = tavily.extract(urls=[url])
+            # Crawl homepage first — 25s timeout
+            homepage_response = _tavily_extract([url], timeout=25)
             homepage_content = ""
             if homepage_response and homepage_response.get('results'):
                 homepage_content = homepage_response['results'][0].get('raw_content', '')
@@ -734,16 +769,13 @@ Treatments:
                 f"{base}/horaires",
             ]
             subpage_content = ""
-            try:
-                sub_response = tavily.extract(urls=subpage_candidates)
-                if sub_response and sub_response.get('results'):
-                    for result in sub_response['results']:
-                        content = result.get('raw_content', '')
-                        page_url = result.get('url', '')
-                        if content and len(content) > 100:
-                            subpage_content += f"\n\n=== SUBPAGE: {page_url} ===\n{content[:3000]}"
-            except Exception:
-                pass
+            sub_response = _tavily_extract(subpage_candidates, timeout=20)
+            if sub_response and sub_response.get('results'):
+                for result in sub_response['results']:
+                    content = result.get('raw_content', '')
+                    page_url = result.get('url', '')
+                    if content and len(content) > 100:
+                        subpage_content += f"\n\n=== SUBPAGE: {page_url} ===\n{content[:3000]}"
 
             return homepage_content + subpage_content
         except Exception:
@@ -1343,12 +1375,12 @@ RESEARCH DATA:
 
     r_col_cat, r_col_deal = st.columns([1, 2])
     with r_col_cat:
-        r_category_options = ["General"]
+        r_category_options = ["— Choose Category —", "General"]
         if sh:
             try:
                 r_cat_headers = sh.worksheet("Category_Rules").row_values(1)
                 if r_cat_headers:
-                    r_category_options = r_cat_headers
+                    r_category_options = ["— Choose Category —"] + r_cat_headers
             except Exception:
                 pass
         r_category = st.selectbox("Category", r_category_options, key="r_category")
@@ -1372,12 +1404,19 @@ RESEARCH DATA:
 
     r_special = st.text_area("Special Instructions (Optional)", height=80, key="r_special")
 
-    research_btn = st.button(
-        "⏳ Research running..." if st.session_state.researcher_running else "Run Research",
-        type="primary",
-        use_container_width=True,
-        disabled=st.session_state.researcher_running
-    )
+    if st.session_state.researcher_running:
+        _run_col, _cancel_col = st.columns([3, 1])
+        with _run_col:
+            st.button("⏳ Research running...", type="primary", use_container_width=True, disabled=True)
+        with _cancel_col:
+            if st.button("🛑 Cancel", use_container_width=True, key="cancel_research"):
+                st.session_state.researcher_running = False
+                st.session_state.run_research_pending = False
+                st.session_state.research_result = None
+                st.rerun()
+        research_btn = False
+    else:
+        research_btn = st.button("Run Research", type="primary", use_container_width=True)
 
     # --------------------------------------------------------------------------
     # BUTTON CLICK — validate and queue, then rerun so button disables first
@@ -1387,7 +1426,10 @@ RESEARCH DATA:
         _deal = st.session_state.get('r_deal_name', '').strip()
         _name = st.session_state.get('r_venue_name', '').strip()
         _url  = st.session_state.get('r_venue_url', '').strip()
-        if not _deal:
+        _cat  = st.session_state.get('r_category', '')
+        if _cat == "— Choose Category —":
+            st.error("Please select a category.")
+        elif not _deal:
             st.error("Deal Name is required.")
         elif not _name and not _url:
             st.error("Provide either a Venue URL or a Venue Name.")
