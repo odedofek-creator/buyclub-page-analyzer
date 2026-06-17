@@ -630,6 +630,12 @@ div.stButton > button[kind="primary"] {
 </style>
 """, unsafe_allow_html=True)
 
+with st.sidebar:
+    if st.button("🚪 Logout"):
+        cookie_manager.delete("bc_auth")
+        st.session_state.password_correct = False
+        st.rerun()
+
 tab1, tab2, tab3 = st.tabs(["🔍 Marketing Researcher", "🛡️ Page Analyzer", "📋 Archive Viewer"])
 
 # ==============================================================================
