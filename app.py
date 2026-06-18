@@ -1018,9 +1018,9 @@ WEBSITE CONTENT:
 
             elif "Hotel" in category:
                 queries += [
-                    f'site:booking.com "{venue_name}"',
-                    f'site:hotels.com "{venue_name}"',
-                    f'site:tripadvisor.com "{venue_name}"',
+                    f'site:booking.com {venue_name} {city}',
+                    f'site:hotels.com {venue_name} {city}',
+                    f'site:tripadvisor.com {venue_name} {city}',
                     f'site:relaischateaux.com "{venue_name}"',
                     f'site:lhw.com "{venue_name}"',
                     f'site:designhotels.com "{venue_name}"',
