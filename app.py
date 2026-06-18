@@ -917,8 +917,6 @@ COLLECTION_MEMBERSHIP: <Relais & Châteaux / Leading Hotels of the World / Desig
 The content may be in French or English — extract based on meaning, not exact text matching.
 Reply in this exact format — one field per line. If a field is not found, write NOT FOUND.
 
-NAME: <business name>
-CITY: <city where the business is located>
 NEIGHBORHOOD: <neighborhood or district within the city, e.g. "Eaux-Vives", "Pâquis", "Champel", "Old Town">
 DATE_OPENED: <year or date the business first opened, e.g. "2019" or "Since 2015">
 ADDRESS: <full street address>
@@ -948,15 +946,22 @@ WEBSITE CONTENT:
         """Run site:-specific Tavily searches for the Marketing Researcher tab."""
         try:
             from urllib.parse import urlparse
-            queries = []
 
-            # Always: search for venue's social profiles and treatment-specific subpages
+            def _run_search(q):
+                try:
+                    response = tavily.search(query=q, search_depth="advanced", max_results=5)
+                    return response.get('results', [])
+                except Exception:
+                    return []
+
+            queries = []
+            tier2_queries = []
+
+            # Venue domain subpage search for treatment-specific content
             if venue_url:
                 try:
                     venue_domain = urlparse(venue_url).netloc
                     if treatment_terms:
-                        # Search venue domain with both FR and EN quoted terms —
-                        # venue website may be in French even if treatment was entered in English
                         seen_domain_terms = set()
                         for term in (fr_terms or []) + (en_terms or []) + [t.strip() for t in treatment_terms.split(',')]:
                             if term not in seen_domain_terms:
@@ -964,10 +969,6 @@ WEBSITE CONTENT:
                                 queries.append(f'site:{venue_domain} "{term}"')
                 except Exception:
                     pass
-
-            # Find Instagram and Facebook profiles — include city to avoid unrelated businesses with same name
-            queries.append(f'site:instagram.com "{venue_name}" {city}')
-            queries.append(f'site:facebook.com "{venue_name}" {city}')
 
             if "Restaurant" in category:
                 if country == "France":
@@ -987,8 +988,8 @@ WEBSITE CONTENT:
                 queries.append(f'site:tripadvisor.com "{venue_name}" "{city}"')
 
             elif "High-Tech Aesthetic Treatment" in category:
+                press_terms = []
                 if treatment_terms:
-                    # English-language publications/databases — always use English terms
                     press_terms = en_terms if en_terms else [t.strip() for t in treatment_terms.split(',') if t.strip()]
                     for term in press_terms:
                         queries += [
@@ -996,13 +997,12 @@ WEBSITE CONTENT:
                             f'site:cosmopolitan.com "{term}"',
                             f'site:vogue.com "{term}"',
                             f'site:marieclaire.com "{term}"',
-                            f'site:harpersbazaar.com "{term}"',
-                            f'site:gq.com "{term}"',
-                            f'site:ncbi.nlm.nih.gov "{term}"',
                             f'site:fda.gov "{term}"',
-                            f'site:who.int "{term}"',
+                        ]
+                        tier2_queries += [
+                            f'site:harpersbazaar.com "{term}"',
+                            f'site:ncbi.nlm.nih.gov "{term}"',
                             f'site:realself.com "{term}"',
-                            f'site:healthline.com "{term}"',
                         ]
                 if country == "France":
                     queries.append(f'site:lefigaro.fr OR site:lemonde.fr OR site:20minutes.fr "{venue_name}"')
@@ -1040,13 +1040,20 @@ WEBSITE CONTENT:
                         f'site:letemps.ch OR site:lematin.ch OR site:tdg.ch OR site:20min.ch "{venue_name}"',
                     ]
 
+            # Run Tier 1 queries in parallel
             all_results = []
-            for q in queries:
-                try:
-                    response = tavily.search(query=q, search_depth="advanced", max_results=5)
-                    all_results.extend(response.get('results', []))
-                except Exception:
-                    continue
+            with ThreadPoolExecutor(max_workers=3) as ex:
+                for results in ex.map(_run_search, queries):
+                    all_results.extend(results)
+
+            # Tier 2 for High-Tech: only fires if Tier 1 found no press results
+            if tier2_queries:
+                tier1_press_domains = ['elle.com', 'cosmopolitan.com', 'vogue.com', 'marieclaire.com', 'fda.gov']
+                tier1_hit = any(any(d in r.get('url', '') for d in tier1_press_domains) for r in all_results)
+                if not tier1_hit:
+                    with ThreadPoolExecutor(max_workers=3) as ex:
+                        for results in ex.map(_run_search, tier2_queries):
+                            all_results.extend(results)
 
             banned_domains = get_banned_domains()
             context_data = []
@@ -1062,7 +1069,6 @@ WEBSITE CONTENT:
                 if any(bad in domain for bad in banned_domains):
                     continue
 
-                # Check if this result is from the venue's own domain
                 venue_domain_check = ""
                 if venue_url:
                     try:
@@ -1099,24 +1105,14 @@ WEBSITE CONTENT:
                     source_label = "PRESS"
                 elif "harpersbazaar" in domain:
                     source_label = "BEAUTY/LIFESTYLE PRESS (Harper's Bazaar)"
-                elif "gq.com" in domain:
-                    source_label = "LIFESTYLE PRESS (GQ)"
                 elif any(d in domain for d in ["elle.com", "vogue.com", "cosmopolitan.com", "marieclaire.com"]):
                     source_label = "BEAUTY/LIFESTYLE PRESS"
                 elif "ncbi.nlm.nih.gov" in domain:
                     source_label = "SCIENTIFIC (PubMed)"
                 elif "fda.gov" in domain:
                     source_label = "SCIENTIFIC (FDA)"
-                elif "who.int" in domain:
-                    source_label = "SCIENTIFIC (WHO)"
                 elif "realself" in domain:
                     source_label = "TREATMENT PLATFORM (RealSelf)"
-                elif "healthline" in domain:
-                    source_label = "HEALTH EDITORIAL (Healthline)"
-                elif "instagram.com" in domain:
-                    source_label = "INSTAGRAM PROFILE"
-                elif "facebook.com" in domain:
-                    source_label = "FACEBOOK PROFILE"
 
                 context_data.append(f"SOURCE: {source_label}\nURL: {url}\nTITLE: {title}\nSNIPPET: {content}\n-------------------")
 
@@ -1219,10 +1215,10 @@ Description, benefits, pricing, and contraindications from the venue website. La
 If any sub-item is not found on the venue website, provide a useful explanation from your own training knowledge about the treatment, clearly labeled as [General Information]. Never just write "Not found." — always give the copywriter something useful to work with.
 
 ## Clinical & Scientific Backing
-PubMed, FDA, WHO sources only. Every claim linked to source. Beauty clinic websites are not accepted here.
+PubMed and FDA sources only. Every claim linked to source. Beauty clinic websites are not accepted here.
 
 ## Beauty & Lifestyle Press Coverage
-Elle, Cosmo, Vogue, Marie Claire, Harper's Bazaar, GQ — for the treatment. Quoted with clickable links.
+Elle, Cosmo, Vogue, Marie Claire, Harper's Bazaar — for the treatment. Quoted with clickable links.
 
 ## Venue Reviews & Ratings
 Google rating + review count (verified via Places API). Up to 5 review snippets.
@@ -1391,7 +1387,7 @@ RESEARCH DATA:
 
     r_col3, r_col4, r_col5 = st.columns([2, 1, 1])
     with r_col3:
-        r_venue_name = st.text_input("Merchant / Venue Name", placeholder="Auto-filled from URL, or enter manually", key="r_venue_name")
+        r_venue_name = st.text_input("Merchant / Venue Name (Required)", placeholder="e.g. Villars Palace", key="r_venue_name")
     with r_col4:
         r_country = st.selectbox("Country", ["Switzerland", "France", "Other"], key="r_country")
     with r_col5:
@@ -1431,8 +1427,8 @@ RESEARCH DATA:
             st.error("Please select a category.")
         elif not _deal:
             st.error("Deal Name is required.")
-        elif not _name and not _url:
-            st.error("Provide either a Venue URL or a Venue Name.")
+        elif not _name:
+            st.error("Venue Name is required.")
         elif time.time() - st.session_state.last_research_time < 5:
             st.warning("Please wait a moment before running again.")
         else:
@@ -1460,38 +1456,14 @@ RESEARCH DATA:
         _cat = r_category
         r_treatments = st.session_state.get('r_treatments', '') if ("Simple Beauty" in _cat or "High-Tech" in _cat) else ''
 
-        with st.status("Running Research...", expanded=True) as r_status:
+        r_status = st.status("Running Research...", expanded=True)
+        try:
 
             resolved_name = r_venue_name.strip()
             resolved_city = r_city.strip()
             crawl_content = ""
-
-            def normalize(text):
-                replacements = {"é":"e","è":"e","ê":"e","ë":"e","à":"a","â":"a","ä":"a","î":"i","ï":"i","ô":"o","ö":"o","ù":"u","û":"u","ü":"u","ç":"c"}
-                t = text.lower().strip()
-                for accented, plain in replacements.items():
-                    t = t.replace(accented, plain)
-                return t
-
-            city_aliases = [
-                {"geneva", "geneve", "genf"},
-                {"zurich", "zürich"},
-                {"bern", "berne"},
-                {"basel", "bale"},
-                {"lausanne"},
-            ]
-
-            def cities_match(a, b):
-                na, nb = normalize(a), normalize(b)
-                if na == nb:
-                    return True
-                for alias_group in city_aliases:
-                    if na in alias_group and nb in alias_group:
-                        return True
-                return False
-
             venue_details = {}
-            website_warning = None  # Set to a string if website retrieval had issues
+            website_warning = None
 
             # Translate treatment terms to EN + FR so we can search correctly
             # regardless of which language the user typed, and regardless of
@@ -1511,50 +1483,16 @@ RESEARCH DATA:
             else:
                 treatment_for_crawl = r_treatments
 
-            # URL-first: crawl and extract name/city + full details if URL provided
+            # Crawl venue website if URL provided
             if r_venue_url:
                 r_status.write("🌐 Crawling venue website...")
                 crawl_content = crawl_venue_url(r_venue_url)
                 if crawl_content:
                     r_status.write("🔍 Extracting venue details from website...")
                     venue_details = extract_venue_details_from_crawl(crawl_content, r_category, treatment_for_crawl)
-                    extracted_name = venue_details.get("NAME", "NOT FOUND")
-                    extracted_city = venue_details.get("CITY", "NOT FOUND")
-
-                    if resolved_name and extracted_name != "NOT FOUND":
-                        if normalize(extracted_name) != normalize(resolved_name):
-                            st.warning(f"⚠️ **Name conflict:** URL crawl found **\"{extracted_name}\"** but you entered **\"{resolved_name}\"**. Proceeding with your manual entry.")
-                    if r_city.strip() and extracted_city != "NOT FOUND":
-                        if not cities_match(extracted_city, r_city.strip()):
-                            st.warning(f"⚠️ **City conflict:** URL crawl found **\"{extracted_city}\"** but you entered **\"{r_city.strip()}\"**. Proceeding with your manual entry.")
-
-                    if not resolved_name and extracted_name != "NOT FOUND":
-                        resolved_name = extracted_name
-                    if not r_city.strip() and extracted_city != "NOT FOUND":
-                        resolved_city = extracted_city
                 else:
                     website_warning = f"⚠️ **Website not accessible:** Tavily was unable to retrieve content from `{r_venue_url}`. Either the URL is wrong, or the website requires JavaScript to load. All venue details below are sourced from Google and external sources — not from the merchant's own website."
                     r_status.write("⚠️ Could not crawl venue URL — using manually entered details.")
-
-            if not resolved_name and r_venue_url:
-                # Website crawled but Gemini couldn't find the name (JS-heavy site, logo-only header, etc.)
-                # Derive a candidate name from the domain as a fallback
-                try:
-                    from urllib.parse import urlparse
-                    domain = urlparse(r_venue_url).netloc.replace("www.", "")
-                    name_candidate = domain.rsplit(".", 1)[0].replace("-", " ").replace("_", " ").title()
-                    if name_candidate:
-                        resolved_name = name_candidate
-                        website_warning = f"⚠️ **Venue name not found on website:** Tavily couldn't find the venue name on `{r_venue_url}`, so it's using the name derived from the URL: **\"{resolved_name}\"**. If this is wrong, enter the correct name in the Venue Name field and run again."
-                        st.warning(website_warning)
-                except Exception:
-                    pass
-
-            if not resolved_name:
-                st.error("Could not determine venue name. Please enter it manually in the Venue Name field.")
-                r_status.update(label="❌ Missing venue name", state="error", expanded=False)
-                st.session_state.researcher_running = False
-                st.stop()
 
             r_status.write(f"🕵️ Researching '{resolved_name}' in {resolved_city}...")
             gen_rules_r, feedback_rules_r = get_research_rules()
@@ -1563,7 +1501,7 @@ RESEARCH DATA:
             venue_details_block = ""
             if venue_details:
                 field_labels = {
-                    "NAME": "Business Name", "CITY": "City", "NEIGHBORHOOD": "Neighborhood",
+                    "NEIGHBORHOOD": "Neighborhood",
                     "DATE_OPENED": "Date Opened", "ADDRESS": "Address", "PHONE": "Phone",
                     "HOURS": "Opening Hours", "FACEBOOK": "Facebook", "INSTAGRAM": "Instagram",
                     "STORY": "Brand Story / Marketing Pitch",
@@ -1630,7 +1568,11 @@ RESEARCH DATA:
 
             r_status.update(label="✅ Research Complete", state="complete", expanded=False)
 
-        st.session_state.researcher_running = False
+        except Exception as _research_exc:
+            r_status.update(label="❌ Research Failed", state="error", expanded=False)
+            st.error(f"Research failed: {str(_research_exc)}")
+        finally:
+            st.session_state.researcher_running = False
 
     # --------------------------------------------------------------------------
     # DISPLAY BRIEF & ACTIONS
