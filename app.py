@@ -1141,11 +1141,9 @@ For Phone: use the website extraction first; if not found there, check "PHONE (f
 For Facebook and Instagram: check both the VENUE WEBSITE extraction AND any INSTAGRAM PROFILE or FACEBOOK PROFILE sources in the research data. Use whichever URL is found. Format as clickable markdown: [Facebook](url) and [Instagram](url).
 List ALL fields. For each field: show the value if found, or write "Not found." if not. Do not move these to the bottom "Not Found" section — handle them here inline.
 
-## About the Restaurant
-Concept, cuisine type, brand story / marketing pitch. Sourced from venue website.
-
-## Menu Highlights
-Notable or signature dishes from the website. If none found, write "Not found."
+## Key Marketing Points
+Copywriter-ready claims. All factual claims linked to source.
+If the restaurant has any Michelin or Gault&Millau recognition (mentions, rating, or stars), that MUST be the first bullet point — it is the strongest credential for BuyClub's audience.
 
 ## Ratings & Awards
 Use this exact order and these exact sub-headers:
@@ -1167,9 +1165,11 @@ Use this exact order and these exact sub-headers:
 ## Press Mentions
 Swiss or French press coverage of the venue. Quoted with clickable links.
 
-## Key Marketing Points
-Copywriter-ready claims. All factual claims linked to source.
-If the restaurant has any Michelin or Gault&Millau recognition (mentions, rating, or stars), that MUST be the first bullet point — it is the strongest credential for BuyClub's audience.
+## About the Restaurant
+Concept, cuisine type, brand story / marketing pitch. Sourced from venue website.
+
+## Menu Highlights
+Notable or signature dishes from the website. If none found, write "Not found."
 
 ## Not Found
 List each specific thing that was searched for but not found (e.g. "Michelin: not found", "Gault&Millau: not found", "TripAdvisor: not found", "Press coverage: not found", "Neighborhood: not found", etc.)
@@ -1185,11 +1185,8 @@ For Phone: use the website extraction first; if not found there, check "PHONE (f
 For Facebook and Instagram: check both the VENUE WEBSITE extraction AND any INSTAGRAM PROFILE or FACEBOOK PROFILE sources in the research data. Use whichever URL is found. Format as clickable markdown: [Facebook](url) and [Instagram](url).
 List ALL fields. For each field: show the value if found, or write "Not found." if not. Do not move these to the bottom "Not Found" section — handle them here inline.
 
-## About the Venue
-Brand story / marketing pitch, specialization, credentials. Sourced from venue website.
-
-## Treatment
-Description and pricing from the venue website. Label this as "From venue website." If not found, say so.
+## Key Marketing Points
+What makes this venue distinctive. All factual claims linked to source.
 
 ## Venue Reviews & Ratings
 Google rating + review count (verified via Places API). Up to 5 review snippets for copywriter use.
@@ -1197,8 +1194,11 @@ Google rating + review count (verified via Places API). Up to 5 review snippets 
 ## Press Mentions
 Swiss/French press or Elle coverage of the venue. Quoted with clickable links.
 
-## Key Marketing Points
-What makes this venue distinctive. All factual claims linked to source.
+## About the Venue
+Brand story / marketing pitch, specialization, credentials. Sourced from venue website.
+
+## Treatment
+Description and pricing from the venue website. Label this as "From venue website." If not found, say so.
 
 ## Not Found
 List each specific thing that was searched for but not found.
@@ -1214,6 +1214,18 @@ For Phone: use the website extraction first; if not found there, check "PHONE (f
 For Facebook and Instagram: check both the VENUE WEBSITE extraction AND any INSTAGRAM PROFILE or FACEBOOK PROFILE sources in the research data. Use whichever URL is found. Format as clickable markdown: [Facebook](url) and [Instagram](url).
 List ALL fields. For each field: show the value if found, or write "Not found." if not. Do not move these to the bottom "Not Found" section — handle them here inline.
 
+## Key Marketing Points
+Copywriter-ready claims. Clinical claims only from verified scientific sources.
+
+## Venue Reviews & Ratings
+Google rating + review count (verified via Places API). Up to 5 review snippets.
+
+## Beauty & Lifestyle Press Coverage
+Elle, Cosmo, Vogue, Marie Claire, Harper's Bazaar — for the treatment. Quoted with clickable links.
+
+## Local Press Mentions
+Swiss or French press coverage of the venue. Quoted with clickable links.
+
 ## About the Venue
 Brand story / marketing pitch, practitioner credentials. Sourced from venue website.
 
@@ -1223,18 +1235,6 @@ If any sub-item is not found on the venue website, provide a useful explanation 
 
 ## Clinical & Scientific Backing
 PubMed and FDA sources only. Every claim linked to source. Beauty clinic websites are not accepted here.
-
-## Beauty & Lifestyle Press Coverage
-Elle, Cosmo, Vogue, Marie Claire, Harper's Bazaar — for the treatment. Quoted with clickable links.
-
-## Venue Reviews & Ratings
-Google rating + review count (verified via Places API). Up to 5 review snippets.
-
-## Local Press Mentions
-Swiss or French press coverage of the venue. Quoted with clickable links.
-
-## Key Marketing Points
-Copywriter-ready claims. Clinical claims only from verified scientific sources.
 
 ## Not Found
 List each specific thing that was searched for but not found.
@@ -1250,17 +1250,8 @@ For Phone: use the website extraction first; if not found there, check "PHONE (f
 For Facebook and Instagram: check both the VENUE WEBSITE extraction AND any INSTAGRAM PROFILE or FACEBOOK PROFILE sources in the research data. Use whichever URL is found. Format as clickable markdown: [Facebook](url) and [Instagram](url).
 List ALL fields. For each field: show the value if found, or write "Not found." if not. Do not move these to the bottom "Not Found" section — handle them here inline.
 
-## About the Hotel
-Hotel concept, history, brand story, unique selling proposition. Sourced from venue website.
-
-## Rooms
-Room types, sizes in m² where available, notable features (balcony, mountain view, lake view, etc.). From venue website. If sizes not found, write "Not found."
-
-## Spa & Wellness
-Spa name, size in m², full list of facilities (indoor pool, outdoor pool, hammam, sauna, steam room, fitness center, etc.). From venue website. If no spa, write "Not found."
-
-## Dining
-Restaurant name(s), cuisine type, any Michelin or Gault&Millau recognition. From venue website and Michelin/Gault&Millau sources. Label each item with its source.
+## Key Marketing Points
+Copywriter-ready bullet points: strongest award or rating credential, unique features (spa, architecture, setting), distance from Geneva and/or Lausanne, seasonal angle if relevant. All factual claims linked to source.
 
 ## Ratings & Awards
 - Booking.com: score (e.g. 9.4) and rating label (e.g. "Exceptional") [BOOKING.COM]
@@ -1275,8 +1266,17 @@ Condé Nast Traveler coverage — quoted with clickable link.
 Swiss or French press mentions — quoted with clickable links.
 If none found for a specific source, note it.
 
-## Key Marketing Points
-Copywriter-ready bullet points: strongest award or rating credential, unique features (spa, architecture, setting), distance from Geneva and/or Lausanne, seasonal angle if relevant. All factual claims linked to source.
+## About the Hotel
+Hotel concept, history, brand story, unique selling proposition. Sourced from venue website.
+
+## Rooms
+Room types, sizes in m² where available, notable features (balcony, mountain view, lake view, etc.). From venue website. If sizes not found, write "Not found."
+
+## Spa & Wellness
+Spa name, size in m², full list of facilities (indoor pool, outdoor pool, hammam, sauna, steam room, fitness center, etc.). From venue website. If no spa, write "Not found."
+
+## Dining
+Restaurant name(s), cuisine type, any Michelin or Gault&Millau recognition. From venue website and Michelin/Gault&Millau sources. Label each item with its source.
 
 ## Not Found
 List each external source searched but not found (e.g. "Relais & Châteaux: not found", "LHW: not found", "Design Hotels: not found", "Swiss Deluxe Hotels: not found", "Condé Nast Traveler: not found", "Michelin: not found", "Gault&Millau: not found", "Swiss press: not found").
@@ -1292,14 +1292,14 @@ For Phone: use the website extraction first; if not found there, check "PHONE (f
 For Facebook and Instagram: check both the VENUE WEBSITE extraction AND any INSTAGRAM PROFILE or FACEBOOK PROFILE sources in the research data. Use whichever URL is found. Format as clickable markdown: [Facebook](url) and [Instagram](url).
 List ALL fields. For each field: show the value if found, or write "Not found." if not.
 
-## Overview
-Concept and what makes the venue distinctive.
+## Key Marketing Points
+Copywriter-ready claims. All factual claims linked to source.
 
 ## Reviews & Ratings
 Google rating (verified via Places API) and any other platforms found.
 
-## Key Marketing Points
-Copywriter-ready claims. All factual claims linked to source.
+## Overview
+Concept and what makes the venue distinctive.
 
 ## Not Found
 List each specific thing that was searched for but not found.
@@ -1551,6 +1551,7 @@ RESEARCH DATA:
                 google_block = "SOURCE: GOOGLE (Places API)\nNOTE: No listing found for this venue on Google Places.\n-------------------\n"
                 r_status.write("⚠️ Google Places: no match found. The venue may not have a Google listing, or the name may differ on Google Maps.")
 
+            r_status.write("🔎 Running web searches — this takes 30–60 seconds...")
             tavily_data = perform_researcher_research(
                 resolved_name, r_category, resolved_city, r_country, r_treatments, r_venue_url,
                 en_terms=en_terms, fr_terms=fr_terms
