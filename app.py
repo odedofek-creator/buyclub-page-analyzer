@@ -42,7 +42,7 @@ def check_password():
 
     # Check persistent cookie first — skip login if already authenticated
     if not st.session_state.password_correct:
-        if cookie_manager.get(cookie="bc_auth") == "authenticated":
+        if not st.session_state.get("_logged_out") and cookie_manager.get(cookie="bc_auth") == "authenticated":
             st.session_state.password_correct = True
 
     if st.session_state.password_correct:
@@ -658,6 +658,7 @@ with _col_logout:
     if st.button("🚪 Logout", use_container_width=True, key="global_logout"):
         cookie_manager.delete("bc_auth")
         st.session_state.password_correct = False
+        st.session_state._logged_out = True
         st.rerun()
 
 tab1, tab2, tab3 = st.tabs(["🔍 Marketing Researcher", "🛡️ Page Analyzer", "📋 Archive Viewer"])
