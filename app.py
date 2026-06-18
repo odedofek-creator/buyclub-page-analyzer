@@ -1047,6 +1047,7 @@ WEBSITE CONTENT:
                     all_results.extend(results)
 
             # Tier 2 for High-Tech: only fires if Tier 1 found no press results
+            tier2_skipped = False
             if tier2_queries:
                 tier1_press_domains = ['elle.com', 'cosmopolitan.com', 'vogue.com', 'marieclaire.com', 'fda.gov']
                 tier1_hit = any(any(d in r.get('url', '') for d in tier1_press_domains) for r in all_results)
@@ -1054,6 +1055,8 @@ WEBSITE CONTENT:
                     with ThreadPoolExecutor(max_workers=3) as ex:
                         for results in ex.map(_run_search, tier2_queries):
                             all_results.extend(results)
+                else:
+                    tier2_skipped = True
 
             banned_domains = get_banned_domains()
             context_data = []
@@ -1115,6 +1118,9 @@ WEBSITE CONTENT:
                     source_label = "TREATMENT PLATFORM (RealSelf)"
 
                 context_data.append(f"SOURCE: {source_label}\nURL: {url}\nTITLE: {title}\nSNIPPET: {content}\n-------------------")
+
+            if tier2_skipped:
+                context_data.append("SOURCE: SEARCH METADATA\nNOTE: Harper's Bazaar, PubMed, and RealSelf were NOT searched — mainstream press (Elle/Vogue/Cosmo/Marie Claire) already returned results for this treatment. Do not write 'Not found' for these sources. Instead write 'Not searched — mainstream press coverage found' if they need to be referenced.\n-------------------")
 
             return "\n".join(context_data)
         except Exception as e:
@@ -1456,6 +1462,7 @@ RESEARCH DATA:
         _cat = r_category
         r_treatments = st.session_state.get('r_treatments', '') if ("Simple Beauty" in _cat or "High-Tech" in _cat) else ''
 
+        r_status = None
         r_status = st.status("Running Research...", expanded=True)
         try:
 
@@ -1569,7 +1576,8 @@ RESEARCH DATA:
             r_status.update(label="✅ Research Complete", state="complete", expanded=False)
 
         except Exception as _research_exc:
-            r_status.update(label="❌ Research Failed", state="error", expanded=False)
+            if r_status:
+                r_status.update(label="❌ Research Failed", state="error", expanded=False)
             st.error(f"Research failed: {str(_research_exc)}")
         finally:
             st.session_state.researcher_running = False
