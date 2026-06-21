@@ -1348,12 +1348,16 @@ RESEARCH DATA:
 {research_data}
 """
 
-        try:
-            model = genai.GenerativeModel(model_name='gemini-3.5-flash', system_instruction=system_prompt)
-            response = model.generate_content(user_prompt, request_options={"timeout": 60})
-            return response.text
-        except Exception as e:
-            return f"FATAL ERROR: {str(e)}"
+        model = genai.GenerativeModel(model_name='gemini-3.5-flash', system_instruction=system_prompt)
+        for attempt in range(2):
+            try:
+                response = model.generate_content(user_prompt, request_options={"timeout": 120})
+                return response.text
+            except Exception as e:
+                if attempt == 0 and "504" in str(e):
+                    time.sleep(3)
+                    continue
+                return f"FATAL ERROR: {str(e)}"
 
     def archive_research(sheet_obj, deal_name, category, venue_name, city, country, brief_text):
         """Save research brief to Research_Archive tab."""
