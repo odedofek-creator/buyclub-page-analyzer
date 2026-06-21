@@ -943,7 +943,7 @@ WEBSITE CONTENT:
         except Exception:
             return {}
 
-    def perform_researcher_research(venue_name, category, city, country, treatment_terms="", venue_url="", en_terms=None, fr_terms=None):
+    def perform_researcher_research(venue_name, category, city, country, treatment_terms="", venue_url="", en_terms=None, fr_terms=None, dining_name=""):
         """Run site:-specific Tavily searches for the Marketing Researcher tab."""
         try:
             from urllib.parse import urlparse
@@ -1022,23 +1022,24 @@ WEBSITE CONTENT:
                     f'site:booking.com {venue_name} {city}',
                     f'site:hotels.com {venue_name} {city}',
                     f'site:tripadvisor.com {venue_name} {city}',
-                    f'site:relaischateaux.com "{venue_name}"',
                     f'site:lhw.com "{venue_name}"',
                     f'site:designhotels.com "{venue_name}"',
                     f'site:swissdeluxehotels.com "{venue_name}"',
                     f'site:cntraveler.com "{venue_name}"',
                 ]
+                # Search Michelin/Gault&Millau by on-site restaurant name if known, else hotel name
+                _raw_dining = dining_name if (dining_name and dining_name.upper() != "NOT FOUND") else ""
+                michelin_name = _raw_dining.split('(')[0].split(',')[0].strip() if _raw_dining else venue_name
                 if country == "France":
                     queries += [
-                        f'site:guide.michelin.com/fr "{venue_name}"',
-                        f'site:gaultmillau.fr "{venue_name}"',
+                        f'site:guide.michelin.com/fr "{michelin_name}"',
+                        f'site:gaultmillau.fr "{michelin_name}"',
                         f'site:lefigaro.fr OR site:lemonde.fr OR site:20minutes.fr "{venue_name}"',
                     ]
                 else:
                     queries += [
-                        f'site:guide.michelin.com/ch/fr "{venue_name}"',
-                        f'site:gaultmillau.ch "{venue_name}"',
-                        f'site:letemps.ch OR site:lematin.ch OR site:tdg.ch OR site:20min.ch "{venue_name}"',
+                        f'site:guide.michelin.com/ch/fr "{michelin_name}"',
+                        f'site:gaultmillau.ch "{michelin_name}"',
                     ]
 
             # Run Tier 1 queries in parallel
@@ -1558,7 +1559,8 @@ RESEARCH DATA:
             r_status.write("🔎 Running web searches — this takes 30–60 seconds...")
             tavily_data = perform_researcher_research(
                 resolved_name, r_category, resolved_city, r_country, r_treatments, r_venue_url,
-                en_terms=en_terms, fr_terms=fr_terms
+                en_terms=en_terms, fr_terms=fr_terms,
+                dining_name=venue_details.get("DINING", "")
             )
             research_data = venue_details_block + google_block + tavily_data
 
